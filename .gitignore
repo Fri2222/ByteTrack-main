@@ -1,0 +1,17 @@
+.idea/
+__pycache__/
+*.pyc
+*.pth
+*.tar
+
+# 忽略当前目录的大文件夹
+YOLOX_outputs/
+datasets/
+pretrained/
+
+# 忽略可能存在的嵌套大文件夹 (防止因为解压产生的嵌套结构导致忽略失败)
+ByteTrack-main/YOLOX_outputs/
+ByteTrack-main/datasets/
+ByteTrack-main/pretrained/
+*/YOLOX_outputs/
+*/datasets/
