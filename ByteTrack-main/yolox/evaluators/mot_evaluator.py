@@ -592,7 +592,7 @@ class MOTEvaluator:
     def convert_to_coco_format(self, outputs, info_imgs, ids):
         data_list = []
         for (output, img_h, img_w, img_id) in zip(
-            outputs, info_imgs[0], info_imgs[1], ids
+                outputs, info_imgs[0], info_imgs[1], ids
         ):
             if output is None:
                 continue
@@ -600,17 +600,21 @@ class MOTEvaluator:
 
             bboxes = output[:, 0:4]
 
-            # preprocessing: resize
-            scale = min(
-                self.img_size[0] / float(img_h), self.img_size[1] / float(img_w)
-            )
-            bboxes /= scale
-            bboxes = xyxy2xywh(bboxes)
+            # --- 删除错误的 bboxes_iou 调用，只保留核心逻辑 ---
 
             cls = output[:, 6]
             scores = output[:, 4] * output[:, 5]
+
             for ind in range(bboxes.shape[0]):
-                label = self.dataloader.dataset.class_ids[int(cls[ind])]
+                # === 强制过滤非人类别 ===
+                # COCO 权重中 0 是行人。如果是其他类别(如背包26)，直接跳过
+                if int(cls[ind]) != 0:
+                    continue
+                # =====================
+
+                # 强制将标签设为 1 (MOT格式要求行人ID为1)
+                label = 1
+
                 pred_data = {
                     "image_id": int(img_id),
                     "category_id": label,
