@@ -15,3 +15,5 @@ ByteTrack-main/datasets/
 ByteTrack-main/pretrained/
 */YOLOX_outputs/
 */datasets/
+*.mp4
+*.flv

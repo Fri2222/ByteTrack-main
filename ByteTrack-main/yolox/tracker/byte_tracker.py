@@ -6,7 +6,15 @@ import copy
 import torch
 import torch.nn.functional as F
 
-from .kalman_filter import KalmanFilter
+# 修改：原始导入
+#from .kalman_filter import KalmanFilter
+
+# 修改：导入改进版KF
+from .kalman_filter_improved import ImprovedKalmanFilter as KalmanFilter
+
+# 修改：导入改进版KF和KalmanNet
+from .kalman_filter_improved_KalmanNet import ImprovedKalmanFilter as KalmanFilter
+
 from yolox.tracker import matching
 from .basetrack import BaseTrack, TrackState
 
@@ -22,6 +30,9 @@ class STrack(BaseTrack):
 
         self.score = score
         self.tracklet_len = 0
+
+        # 修改：KalmanNet每个轨迹独有的 GRU 隐状态
+        self.kalman_hidden = None
 
     def predict(self):
         mean_state = self.mean.copy()
@@ -80,8 +91,19 @@ class STrack(BaseTrack):
         self.tracklet_len += 1
 
         new_tlwh = new_track.tlwh
+        score = new_track.score
+
+        # === 修改：改进KF (带参数) ===
         self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
+            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh),
+            confidence=score  # <--- 原始版必须删掉这行！
+        )
+
+        # === 修改：原始KF (原始纯净版) ===
+        # self.mean, self.covariance = self.kalman_filter.update(
+        #     self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh)
+        # )
+        #===========================
         self.state = TrackState.Tracked
         self.is_activated = True
 
