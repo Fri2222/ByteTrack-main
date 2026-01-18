@@ -16,7 +16,7 @@ class Exp(MyExp):
         self.exp_name = os.path.split(os.path.realpath(__file__))[1].split(".")[0]
 
         # ================== 3. 数据与类别 ==================
-        self.num_classes = 1
+        self.num_classes = 80
         self.input_size = (800, 1440)
         self.test_size = (800, 1440)
         self.train_ann = "train_half.json"

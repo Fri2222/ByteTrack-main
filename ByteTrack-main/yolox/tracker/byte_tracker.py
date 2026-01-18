@@ -6,7 +6,12 @@ import copy
 import torch
 import torch.nn.functional as F
 
+# 原始导入
 from .kalman_filter import KalmanFilter
+
+# 导入改进版
+#from .kalman_filter_improved import ImprovedKalmanFilter as KalmanFilter
+
 from yolox.tracker import matching
 from .basetrack import BaseTrack, TrackState
 
@@ -80,8 +85,19 @@ class STrack(BaseTrack):
         self.tracklet_len += 1
 
         new_tlwh = new_track.tlwh
+        score = new_track.score
+
+        # === 修改后KF (带参数) ===
+        # self.mean, self.covariance = self.kalman_filter.update(
+        #     self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh),
+        #     confidence=score  # <--- 原始版必须删掉这行！
+        # )
+
+        # === 原始KF (原始纯净版) ===
         self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
+            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh)
+        )
+        #===========================
         self.state = TrackState.Tracked
         self.is_activated = True
 
