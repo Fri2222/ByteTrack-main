@@ -5,6 +5,7 @@
 | **Exp-001** | 2026-01-18 | `官方bytetrackMOT 权重下的改进KF` | 改进KF: Q矩阵噪声减小, init_cov=0.1 | **80.3%** | **79.6%** |
 | **Exp-002** | 2026-01-18 | `Exp-001基础上添加线性训练的KalmanNet` | 线性训练的KalmanNet | ** -6.6%** | **3.0%** |
 | **Exp-003** | 2026-01-21 | `Exp-001基础上添加依据MOT训练的KalmanNet` | MOT 训练的KalmanNet | ** -4.1%** | **3.0%** |
+| **Exp-004** | 2026-01-21 | `Exp-003基础上修改KalmanNet` | MOT 训练的KalmanNet | ** 80.3%** | **79.2%** |
 
 
 ###################################################################################################################
@@ -97,7 +98,9 @@ OVERALL        3.0%  5.1% 2.1% 22.1% 54.4% 339  0 110 229 9996 41955 5509  5938 
 
 ### Exp-003 
 - **Code Version**: `Exp-001基础上添加依据MOT训练的KalmanNet`
-- **Command**: `python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse`
+- **Command**: 'python prepare_mot_data.py'
+				'python train_kalmannet.py'
+				`python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse`
 - **Output**:
 
                 Rcll  Prcn  GT   MT    PT    ML    FP    FN   IDs    FM  MOTA  MOTP num_objects
@@ -122,7 +125,15 @@ OVERALL        3.0%  4.9% 2.1% 25.9% 59.7% 339  0 147 192 9423 39923 6771  7228 
 
 
 
+####################################################################################################################
 
+
+### Exp-004 
+- **Code Version**: `Exp-003基础上修改KalmanNet`
+- **Command**: 'python prepare_mot_data.py'
+				'python train_kalmannet.py'
+				`python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse`
+- **Output**:
 
 
 

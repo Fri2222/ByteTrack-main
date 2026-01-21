@@ -162,6 +162,9 @@ class ImprovedKalmanFilter(object):
         Returns:
             new_mean, new_covariance
         """
+        """
+            更新步骤 (已修复归一化问题),归一化是因为KalmanNet训练数据进行了归一化，所以需要将观测到的像素点进行归一化
+        """
         # 1. 投影 (包含 NSA 噪声调整)
         projected_mean, projected_cov = self.project(mean, covariance, confidence)
 
@@ -174,23 +177,32 @@ class ImprovedKalmanFilter(object):
         # === [改进分支: Neural Kalman] ===
         if self.use_neural_k:
             try:
+                # [关键修复]: 必须进行归一化！
+                # MOT17 图片大小约为 1920x1080。这里我们用一个近似值进行缩放。
+                # 输入是 (x, y, a, h)，对应缩放因子 (1920, 1080, 1, 1080)
+                scale_tensor = torch.tensor([[[1920.0, 1080.0, 1.0, 1080.0]]], device=self.device)
+
                 # 准备 Tensor 输入: [Batch=1, Seq=1, Feat=4]
                 inno_tensor = torch.tensor(innovation, dtype=torch.float32).view(1, 1, -1).to(self.device)
 
+                # 将输入缩小到 0~1 范围 (匹配训练时的分布)
+                inno_tensor_norm = inno_tensor / scale_tensor
+
                 with torch.no_grad():
-                    # 神经网络前向传播计算 K
-                    # 注意：如果 hidden_state 为 None，GRU 会自动将其初始化为 0
-                    k_tensor, _ = self.net(inno_tensor, hidden_state)
+                    # 神经网络前向传播
+                    k_tensor, _ = self.net(inno_tensor_norm, hidden_state)
 
                     # 转回 Numpy: [8, 4]
                     kalman_gain = k_tensor.squeeze(0).cpu().numpy()
-            except Exception:
-                # 如果神经网络计算出错（比如显存不够），回退到标准计算
+
+            except Exception as e:
+                # print(f"Neural K Error: {e}") # 调试时可以打开
                 kalman_gain = None
 
         # === [标准分支: 传统计算] ===
-        # 如果没开启神经网络，或者神经网络失败，使用标准公式
-        if kalman_gain is None:
+        # 如果没开启神经网络，或者神经网络失败，或者神经网络输出 NaN，使用标准公式
+        # 增加 np.isnan 检查，防止网络输出 nan 导致崩溃
+        if kalman_gain is None or np.isnan(kalman_gain).any():
             chol_factor, lower = scipy.linalg.cho_factor(
                 projected_cov, lower=True, check_finite=False)
             kalman_gain = scipy.linalg.cho_solve(
