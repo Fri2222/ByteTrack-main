@@ -6,6 +6,7 @@ import copy
 import torch
 import torch.nn.functional as F
 
+
 # 修改：原始导入
 #from .kalman_filter import KalmanFilter
 
@@ -14,6 +15,12 @@ from .kalman_filter_improved import ImprovedKalmanFilter as KalmanFilter
 
 # 修改：导入改进版KF和KalmanNet
 from .kalman_filter_improved_KalmanNet import ImprovedKalmanFilter as KalmanFilter
+
+# 修改：原始导入
+#from .kalman_filter import KalmanFilter
+
+# 修改：导入改进版
+from .kalman_filter_improved import ImprovedKalmanFilter as KalmanFilter
 
 from yolox.tracker import matching
 from .basetrack import BaseTrack, TrackState
@@ -93,7 +100,7 @@ class STrack(BaseTrack):
         new_tlwh = new_track.tlwh
         score = new_track.score
 
-        # === 修改：改进KF (带参数) ===
+        # === 修改后KF (带参数) ===
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh),
             confidence=score  # <--- 原始版必须删掉这行！
