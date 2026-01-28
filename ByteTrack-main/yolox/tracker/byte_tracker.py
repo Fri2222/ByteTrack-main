@@ -11,16 +11,10 @@ import torch.nn.functional as F
 #from .kalman_filter import KalmanFilter
 
 # 修改：导入改进版KF
-from .kalman_filter_improved import ImprovedKalmanFilter as KalmanFilter
+#from .kalman_filter_improved import ImprovedKalmanFilter as KalmanFilter
 
 # 修改：导入改进版KF和KalmanNet
 from .kalman_filter_improved_KalmanNet import ImprovedKalmanFilter as KalmanFilter
-
-# 修改：原始导入
-#from .kalman_filter import KalmanFilter
-
-# 修改：导入改进版
-from .kalman_filter_improved import ImprovedKalmanFilter as KalmanFilter
 
 from yolox.tracker import matching
 from .basetrack import BaseTrack, TrackState

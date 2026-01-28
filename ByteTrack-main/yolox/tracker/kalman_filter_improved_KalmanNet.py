@@ -1,4 +1,5 @@
 # yolox/tracker/kalman_filter_improved.py
+from loguru import logger  # <--- 添加这一行
 import numpy as np
 import scipy.linalg
 import torch
@@ -40,21 +41,33 @@ class ImprovedKalmanFilter(object):
         self.net = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+        # [调试 1] 确认一下这里的状态
+        # logger.info(f"DEBUG: KalmanNetNN Class is: {KalmanNetNN}")
+        # logger.info(f"DEBUG: Path exists? {os.path.exists(model_path)}")
+
         # 只有当定义了网络类且权重文件存在时，才启用
         if KalmanNetNN is not None and os.path.exists(model_path):
             try:
                 self.net = KalmanNetNN().to(self.device)
-                # 加载权重
                 checkpoint = torch.load(model_path, map_location=self.device)
                 self.net.load_state_dict(checkpoint)
-                self.net.eval()  # 开启评估模式
+                self.net.eval()
                 self.use_neural_k = True
-                # print(f"[Info] KalmanNet loaded successfully from {model_path}")
+
+                # [修改点] 使用 logger.info 并添加颜色标记
+                logger.info(f"✅ [KalmanNet] ACTIVATED! Loaded from: {model_path}")
+                logger.info(f"   [KalmanNet] Device: {self.device}")
+
             except Exception as e:
-                print(f"[Warning] Failed to load KalmanNet weights: {e}")
+                logger.error(f"❌ [KalmanNet] Load Failed: {e}")
+                logger.info("   [KalmanNet] Fallback to Standard NSA-Kalman Filter.")
                 self.use_neural_k = False
         else:
-            # 如果文件不存在，默默地使用标准模式，不打断训练/推理
+            # 打印为什么没进来的原因
+            if KalmanNetNN is None:
+                logger.warning("⚠️ [KalmanNet] Class import failed (is None). Using Standard KF.")
+            elif not os.path.exists(model_path):
+                logger.warning(f"⚠️ [KalmanNet] Weight file not found: {model_path}. Using Standard KF.")
             pass
 
     def initiate(self, measurement):
@@ -161,9 +174,6 @@ class ImprovedKalmanFilter(object):
             hidden_state: (可选) RNN/GRU 的隐状态，用于 KalmanNet
         Returns:
             new_mean, new_covariance
-        """
-        """
-            更新步骤 (已修复归一化问题),归一化是因为KalmanNet训练数据进行了归一化，所以需要将观测到的像素点进行归一化
         """
         # 1. 投影 (包含 NSA 噪声调整)
         projected_mean, projected_cov = self.project(mean, covariance, confidence)

@@ -73,4 +73,5 @@ def train():
     print(f"KalmanNet weights saved to {save_path}")
 
 if __name__ == "__main__":
+    #使用MOT数据集的真实数据进行训练
     train()
