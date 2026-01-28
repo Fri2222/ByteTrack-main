@@ -146,9 +146,9 @@ def prepare_real_data(data_root, det_root):
     X = torch.tensor(np.array(all_tracks_input), dtype=torch.float32)
     Y = torch.tensor(np.array(all_tracks_gt), dtype=torch.float32)
 
-    print(f"Total matched samples generated: {len(X)}")
-    print(f"Input shape: {X.shape} (Batch, Seq, 5)")
-    print(f"GT shape: {Y.shape} (Batch, Seq, 4)")
+    print(f"INFO ✅| Total matched samples generated: {len(X)}")
+    print(f"INFO ✅| Input shape: {X.shape} (Batch, Seq, 5)")
+    print(f"INFO ✅| GT shape: {Y.shape} (Batch, Seq, 4)")
 
     torch.save((X, Y), 'mot_train_data.pt')  # 覆盖旧文件，方便 train直接调用
     print("Saved to mot_train_data.pt")

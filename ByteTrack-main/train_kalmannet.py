@@ -86,13 +86,23 @@ def train():
     EPOCHS = 20  # 训练轮数
     LR = 1e-3
 
-    # 2. 准备数据
-    train_obs, train_gt = generate_nonlinear_data(num_samples=2000, seq_len=40)
+    # 2. 准备数据 (逻辑修改：优先加载文件，否则生成)
+    data_file_path = 'mot_train_data.pt'
+
+    if os.path.exists(data_file_path):
+        print(f"INFO ✅| Found real data file: {data_file_path}")
+        print("Loading real MOT data...")
+        # 加载数据 (我们之前的脚本保存的就是这个名字)
+        train_obs, train_gt = torch.load(data_file_path)
+    else:
+        print(f"INFO ✅| File {data_file_path} not found.")
+        print("Generating synthetic nonlinear data instead...")
+        train_obs, train_gt = generate_nonlinear_data(num_samples=2000, seq_len=40)
 
     print(f"Data Shape - Obs: {train_obs.shape}, GT: {train_gt.shape}")
-    # 此时应该是 [2000, 40, 5] 和 [2000, 40, 4]，不会再报错了
 
     # 数据归一化 (关键！)
+    # 无论数据来源是真实的(坐标很大)还是生成的(坐标很大)，都需要归一化
     # 输入 Obs: [x, y, a, h, conf] -> 前4维需要归一化
     # GT: [x, y, a, h] -> 全部需要归一化
     scale = torch.tensor([1920, 1080, 1, 1080], dtype=torch.float32)
@@ -169,8 +179,7 @@ def train():
                 # --- Neural Forward ---
                 # 预测卡尔曼增益 K
                 k_gain, hidden = model(net_input, hidden)
-                # k_gain shape: [B, 8, 4] (model内部已经 squeeze(1) 了吗？视你的 model 定义而定)
-                # 假设 kalmannet_model.py 输出是 [B, 8, 4]
+                # k_gain shape: [B, 8, 4]
 
                 # --- Kalman Update ---
                 # x_new = x_pred + K * y
