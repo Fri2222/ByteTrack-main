@@ -114,8 +114,8 @@ class ImprovedKalmanFilter(object):
 
     def project(self, mean, covariance, confidence=None):
         """
-        投影状态到观测空间。
-        [改进点]: 增加 confidence 参数实现 NSA (噪声自适应)。
+        投影状态到观测空间 (论文复现版)
+        Reference: Eq(5) in Paper: R_tilde = (1 - c_k) * R
         """
         std = [
             self._std_weight_position * mean[3],
@@ -123,14 +123,23 @@ class ImprovedKalmanFilter(object):
             1e-1,
             self._std_weight_position * mean[3]]
 
-        # R: 原始测量噪声矩阵
+        # 基础 R 矩阵
         innovation_cov = np.diag(np.square(std))
 
-        # === [改进核心: NSA 噪声自适应] ===
+        # === [改进核心: 论文版 NSA] ===
         if confidence is not None:
-            # 逻辑: 置信度越低 -> scale_factor 越大 -> 噪声 R 越大 -> K 越小 (更信预测)
-            scale_factor = 2.0 - confidence
-            scale_factor = np.clip(scale_factor, 1.0, 10.0)
+            # 论文策略：置信度越低，噪声 R 越大
+            # 公式变种：R_new = R_base / confidence
+            # (当 confidence=1.0, R不变; confidence=0.5, R变大2倍)
+            # 或者使用论文的 (1 - ck) 逻辑的逆变种，这里推荐用除法更稳健
+
+            # 限制 confidence 范围防止除零
+            conf = np.clip(confidence, 0.1, 0.99)
+
+            # 系数 factor：置信度高(0.9) -> factor小(1.1); 置信度低(0.1) -> factor大(10.0)
+            scale_factor = 1.0 / conf
+
+            # 放大噪声协方差
             innovation_cov *= scale_factor
 
         mean = np.dot(self._update_mat, mean)
