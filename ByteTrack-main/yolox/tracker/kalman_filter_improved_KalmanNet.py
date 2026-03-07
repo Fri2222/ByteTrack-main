@@ -21,15 +21,19 @@ class ImprovedKalmanFilter(object):
     2. 支持 Neural Kalman Gain: 使用训练好的 GRU/LSTM 网络预测卡尔曼增益 K。
     """
 
+    #状态空间 (State Space)：滤波器用 8 个数字来描述一个物体：[x, y, a, h, vx, vy, va, vh]。
+    # x, y 是框的中心点坐标。
+    # a 是框的宽高比（宽除以高），h 是框的高度。
+    # vx, vy, va, vh 是它们对应的速度（变化率）
     def __init__(self, model_path="pretrained/kalmannet_best.pth"):
         ndim, dt = 4, 1.
 
-        # F: 状态转移矩阵 (8x8)
+        # F: 状态转移矩阵 (8x8),_motion_mat（运动矩阵）用来算预测
         self._motion_mat = np.eye(2 * ndim, 2 * ndim)
         for i in range(ndim):
             self._motion_mat[i, ndim + i] = dt
 
-        # H: 观测矩阵 (4x8)
+        # H: 观测矩阵 (4x8),_update_mat（观测矩阵）用来提取坐标
         self._update_mat = np.eye(ndim, 2 * ndim)
 
         # 基础权重 (经验值)
@@ -70,6 +74,9 @@ class ImprovedKalmanFilter(object):
                 logger.warning(f"⚠️ [KalmanNet] Weight file not found: {model_path}. Using Standard KF.")
             pass
 
+    #当第一次在视频里看到一个新目标时，调用这个函数
+    #不知道它的速度，所以速度全部设为 0 (mean_vel = np.zeros_like(mean_pos))
+    #给它初始化一个“不确定性矩阵”（covariance）来表示位置误差
     def initiate(self, measurement):
         """初始化轨迹"""
         mean_pos = measurement
@@ -88,6 +95,7 @@ class ImprovedKalmanFilter(object):
         covariance = np.diag(np.square(std))
         return mean, covariance
 
+    #推测下一帧物体在哪里
     def predict(self, mean, covariance):
         """预测步骤 (纯物理模型)"""
         std_pos = [
@@ -112,6 +120,7 @@ class ImprovedKalmanFilter(object):
 
         return mean, covariance
 
+    #confidence 是目标检测器 YOLOX给的置信度
     def project(self, mean, covariance, confidence=None):
         """
         投影状态到观测空间 (论文复现版)
@@ -137,6 +146,7 @@ class ImprovedKalmanFilter(object):
             conf = np.clip(confidence, 0.1, 0.99)
 
             # 系数 factor：置信度高(0.9) -> factor小(1.1); 置信度低(0.1) -> factor大(10.0)
+            #如果置信度很低（比如 0.2），scale_factor 就会变成 5,把它乘到测量噪声 innovation_cov 上
             scale_factor = 1.0 / conf
 
             # 放大噪声协方差
@@ -187,13 +197,15 @@ class ImprovedKalmanFilter(object):
         # 1. 投影 (包含 NSA 噪声调整)
         projected_mean, projected_cov = self.project(mean, covariance, confidence)
 
-        # 2. 计算残差 (Innovation)
+        # 2. 计算残差 (Innovation),预测值与观测值之间的差值
         innovation = measurement - projected_mean
 
         # 3. 计算卡尔曼增益 K
         kalman_gain = None
 
         # === [改进分支: Neural Kalman] ===
+        #Neural Kalman 分支，将残差缩小到0~1范围内，再送进神经网络 self.net，得到一个K
+        #传统分支，复杂的矩阵求逆 scipy.linalg.cho_solve来计算K
         if self.use_neural_k:
             try:
                 # [关键修复]: 必须进行归一化！
@@ -228,13 +240,14 @@ class ImprovedKalmanFilter(object):
                 (chol_factor, lower), np.dot(covariance, self._update_mat.T).T,
                 check_finite=False).T
 
-        # 4. 修正状态
+        # 4. 修正状态，用算好的 K 乘以残差，加到预测值上，得到最精准的当前状态
         new_mean = mean + np.dot(innovation, kalman_gain.T)
         new_covariance = covariance - np.linalg.multi_dot((
             kalman_gain, projected_cov, kalman_gain.T))
 
         return new_mean, new_covariance
 
+    #匹配，马氏距离匈牙利匹配
     def gating_distance(self, mean, covariance, measurements, only_position=False, metric='maha'):
         """计算马氏距离 (用于匈牙利匹配)"""
         mean, covariance = self.project(mean, covariance)

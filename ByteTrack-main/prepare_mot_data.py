@@ -4,6 +4,7 @@ import torch
 from scipy.optimize import linear_sum_assignment
 
 
+#iou_batch计算预测框和真实框交互比
 def iou_batch(bb_test, bb_gt):
     """
     计算检测框与GT之间的IoU矩阵
@@ -26,7 +27,7 @@ def iou_batch(bb_test, bb_gt):
     o = wh / union
     return o
 
-
+#load_mot_file读取数据集文本
 def load_mot_file(filepath):
     """加载 MOT 格式文件"""
     if not os.path.exists(filepath):
@@ -60,6 +61,7 @@ def prepare_real_data(data_root, det_root):
 
     print(f"Processing Real Data from {det_root}...")
 
+    ## ...加载真实文件(GT)和预测文件(Det)...
     for seq in seqs:
         if 'FRCNN' not in seq: continue
 
@@ -101,12 +103,15 @@ def prepare_real_data(data_root, det_root):
             row_ind, col_ind = linear_sum_assignment(-iou_matrix)
 
             for r, c in zip(row_ind, col_ind):
-                # IoU 阈值：只有匹配度高的才用来训练
+                # IoU 阈值：只有匹配度高的才用来训练,IoU匹配阈值为0.5
                 if iou_matrix[r, c] < 0.5: continue
 
                 gt_id = int(gts[c, 1])
 
                 # Det: x, y, w, h, score (长度 5)
+                # 原本文件里的坐标是 [左上角x, 左上角y, 宽度w, 高度h]
+                #卡尔曼滤波         [中心点x, 中心点y, 宽高比例, 高度]
+                #预测框 det_val 蒸架一个数据 score（置信度得分）
                 d = dets[r]
                 det_val = [d[2] + d[4] / 2, d[3] + d[5] / 2, d[4] / d[5], d[5], d[6]]  # cx, cy, ratio, h, score
 
@@ -120,7 +125,7 @@ def prepare_real_data(data_root, det_root):
                 matched_tracks[gt_id]['det'].append(det_val)
                 matched_tracks[gt_id]['gt'].append(gt_val)
 
-        # 4. 切片生成序列
+        # 4. 切片生成序列，把长长的轨迹切成一段段“连续 20 帧”的小片段，SEQ_LEN = 20
         count = 0
         for gt_id, track_dict in matched_tracks.items():
             det_list = track_dict['det']

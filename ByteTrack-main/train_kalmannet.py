@@ -161,6 +161,7 @@ def train():
             for t in range(1, seq_len):
                 # --- Kalman Predict ---
                 # x_pred = F * x_prev
+                #根据上一秒的位置和速度，用纯物理公式（矩阵 F）预测这一秒目标位置
                 pred_state = torch.matmul(current_state, F.T)
 
                 # --- Prepare Neural Input ---
@@ -174,6 +175,7 @@ def train():
 
                 # 拼接输入: [Innovation, Confidence] -> [B, 1, 5]
                 # 注意需要 unsqueeze 增加序列维度适应 GRU
+                #将残差和置信度喂给KalmanNet
                 net_input = torch.cat([innovation, conf], dim=1).unsqueeze(1)
 
                 # --- Neural Forward ---
@@ -185,19 +187,23 @@ def train():
                 # x_new = x_pred + K * y
                 # 手动实现批量矩阵乘法: K [B,8,4] * y [B,4,1]
                 innovation_expanded = innovation.unsqueeze(2)  # [B, 4, 1]
-                update_term = torch.bmm(k_gain, innovation_expanded).squeeze(2)  # [B, 8]
 
+                #预测位置，current_state = 预测结果加上（K * 残差）
+                update_term = torch.bmm(k_gain, innovation_expanded).squeeze(2)  # [B, 8]
                 current_state = pred_state + update_term
 
                 # --- Calculate Loss ---
                 # 监督信号：当前估计位置 vs 真实位置
+                #将计算出来的位置与真实标签gt_pos对比，计算误差
                 gt_pos = b_gt[:, t, :]
                 batch_loss += criterion(current_state[:, :4], gt_pos)
 
             # 反向传播 (Backprop through time)
             # 平均每个时间步的 Loss
             batch_loss = batch_loss / (seq_len - 1)
+            #backward() 是反向传播，意思是顺着刚才算错的路线往回找，看看 AI 脑子里的哪根神经（权重）搭错了
             batch_loss.backward()
+            #optimizer.step() 是优化器，它会把错的神经拨正一点点。经过 20 轮（Epochs）成千上万次的拨正，AI 就变得极其聪明了
             optimizer.step()
 
             total_loss += batch_loss.item()
