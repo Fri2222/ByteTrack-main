@@ -52,7 +52,7 @@ class ImprovedKalmanFilter(object):
         # 只有当定义了网络类且权重文件存在时，才启用
         if KalmanNetNN is not None and os.path.exists(model_path):
             try:
-                self.net = KalmanNetNN().to(self.device)
+                self.net = KalmanNetNN(input_dim=5).to(self.device)
                 checkpoint = torch.load(model_path, map_location=self.device)
                 self.net.load_state_dict(checkpoint)
                 self.net.eval()
@@ -218,6 +218,13 @@ class ImprovedKalmanFilter(object):
 
                 # 将输入缩小到 0~1 范围 (匹配训练时的分布)
                 inno_tensor_norm = inno_tensor / scale_tensor
+
+                # 👇 [新增代码]：将传进来的 confidence 也转成 Tensor 并拼接进去
+                conf_val = confidence if confidence is not None else 1.0
+                conf_tensor = torch.tensor([[[conf_val]]], dtype=torch.float32, device=self.device)
+
+                # 拼接：[1, 1, 4] 和 [1, 1, 1] -> [1, 1, 5]
+                net_input = torch.cat([inno_tensor_norm, conf_tensor], dim=-1)
 
                 with torch.no_grad():
                     # 神经网络前向传播
