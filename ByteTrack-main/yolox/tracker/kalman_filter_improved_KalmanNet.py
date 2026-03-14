@@ -200,6 +200,8 @@ class ImprovedKalmanFilter(object):
         # 2. 计算残差 (Innovation),预测值与观测值之间的差值
         innovation = measurement - projected_mean
 
+        # 👇 [新增] 定义一个新的变量来接收新记忆，默认等于旧记忆
+        new_hidden_state = hidden_state
         # 3. 计算卡尔曼增益 K
         kalman_gain = None
 
@@ -227,14 +229,38 @@ class ImprovedKalmanFilter(object):
                 net_input = torch.cat([inno_tensor_norm, conf_tensor], dim=-1)
 
                 with torch.no_grad():
-                    # 神经网络前向传播
-                    k_tensor, _ = self.net(inno_tensor_norm, hidden_state)
+                    # 👇 [关键修复]: 用 new_hidden_state 接收网络输出的新记忆！
+                    k_tensor, new_hidden_state = self.net(net_input, hidden_state)
+                    # 2. 转回 Numpy (注意这里的名字必须是 kalman_gain_norm！)
+                    kalman_gain_norm = k_tensor.squeeze(0).cpu().numpy()
 
-                    # 转回 Numpy: [8, 4]
-                    kalman_gain = k_tensor.squeeze(0).cpu().numpy()
+                    # 👇👇👇 [核心修复：物理尺度逆变换] 👇👇👇
+                    # 定义状态空间(8维)和观测空间(4维)的物理尺度
+                    scale_8d = np.array([1920.0, 1080.0, 1.0, 1080.0, 1920.0, 1080.0, 1.0, 1080.0])
+                    scale_4d = np.array([1920.0, 1080.0, 1.0, 1080.0])
+
+                    # 利用 NumPy 广播机制进行矩阵尺度变换： K_real = K_norm * (S_8 / S_4)
+                    kalman_gain = kalman_gain_norm * (scale_8d[:, None] / scale_4d[None, :])
+                    # 👆👆👆 ============================== 👆👆👆
+
+                    # 👇👇👇 [新增的 DEBUG 探针代码，直接复制放在这里] 👇👇👇
+                    if not hasattr(self, 'debug_print_count'):
+                        self.debug_print_count = 0
+
+                    if self.debug_print_count < 5:
+                        print(
+                            f"\n=================== [KALMANNET DEBUG {self.debug_print_count + 1}/5] ===================")
+                        print(f"📥 输入残差 (Pixels): {np.round(innovation, 2)}")
+                        print(f"📥 归一化输入 (Network In): {np.round(inno_tensor_norm.cpu().numpy()[0][0], 4)}")
+                        print(f"🧠 输出增益 K (前4行-位置更新):\n{np.round(kalman_gain[:4, :], 4)}")
+                        print(f"🧠 输出增益 K (后4行-速度更新):\n{np.round(kalman_gain[4:, :], 4)}")
+                        print(f"📦 隐状态 Q (Mean): {new_hidden_state[0].mean().item():.6f}")
+                        print(f"===================================================================\n")
+                        self.debug_print_count += 1
+                    # 👆👆👆 [DEBUG 探针代码结束] 👆👆👆
 
             except Exception as e:
-                # print(f"Neural K Error: {e}") # 调试时可以打开
+                print(f"Neural K Error: {e}") # 调试时可以打开
                 kalman_gain = None
 
         # === [标准分支: 传统计算] ===
@@ -252,7 +278,9 @@ class ImprovedKalmanFilter(object):
         new_covariance = covariance - np.linalg.multi_dot((
             kalman_gain, projected_cov, kalman_gain.T))
 
-        return new_mean, new_covariance
+
+
+        return new_mean, new_covariance, new_hidden_state
 
     #匹配，马氏距离匈牙利匹配
     def gating_distance(self, mean, covariance, measurements, only_position=False, metric='maha'):
