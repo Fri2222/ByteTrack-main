@@ -5,7 +5,10 @@ import numpy as np
 import os
 from torch.utils.data import DataLoader, TensorDataset
 
-# [修复 1] 导入正确的架构 #2 类名
+
+from yolox.tracker.kalmannet_model import KalmanNetNN, KF_INPUT_DIM, KF_STATE_DIM, KF_OBS_DIM
+
+
 try:
     from yolox.tracker.kalmannet_model import KalmanNetNN
 except ImportError:
@@ -48,7 +51,7 @@ def train():
 
     # [修复 2] 使用 KalmanNetArch2，并显式指定 input_dim=5
     # input_dim=5 (x,y,a,h,conf), state_dim=8, obs_dim=4
-    model = KalmanNetNN(input_dim=5, state_dim=8, obs_dim=4).to(device)
+    model = KalmanNetNN().to(device)
     optimizer = optim.Adam(model.parameters(), lr=LR)
     criterion = nn.MSELoss()
 
@@ -59,7 +62,7 @@ def train():
 
     H = torch.eye(4, 8).to(device)
 
-    print("Start Training KalmanNet Arch #2...")
+    print("Start Training KalmanNet ...")
     model.train()
 
     for epoch in range(EPOCHS):

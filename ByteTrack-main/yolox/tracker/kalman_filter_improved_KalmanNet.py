@@ -250,11 +250,11 @@ class ImprovedKalmanFilter(object):
                     if self.debug_print_count < 5:
                         print(
                             f"\n=================== [KALMANNET DEBUG {self.debug_print_count + 1}/5] ===================")
-                        print(f"📥 输入残差 (Pixels): {np.round(innovation, 2)}")
-                        print(f"📥 归一化输入 (Network In): {np.round(inno_tensor_norm.cpu().numpy()[0][0], 4)}")
-                        print(f"🧠 输出增益 K (前4行-位置更新):\n{np.round(kalman_gain[:4, :], 4)}")
-                        print(f"🧠 输出增益 K (后4行-速度更新):\n{np.round(kalman_gain[4:, :], 4)}")
-                        print(f"📦 隐状态 Q (Mean): {new_hidden_state[0].mean().item():.6f}")
+                        print(f" 输入残差 (Pixels): {np.round(innovation, 2)}")
+                        print(f" 归一化输入 (Network In): {np.round(inno_tensor_norm.cpu().numpy()[0][0], 4)}")
+                        print(f" 输出增益 K (前4行-位置更新):\n{np.round(kalman_gain[:4, :], 4)}")
+                        print(f" 输出增益 K (后4行-速度更新):\n{np.round(kalman_gain[4:, :], 4)}")
+                        print(f" 隐状态 Q (Mean): {new_hidden_state[0].mean().item():.6f}")
                         print(f"===================================================================\n")
                         self.debug_print_count += 1
                     # 👆👆👆 [DEBUG 探针代码结束] 👆👆👆
