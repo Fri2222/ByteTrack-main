@@ -77,6 +77,12 @@ def train():
             hidden = None
             batch_loss = 0
 
+            # 👇 [新增]: 初始化 F1 和 F4 的“前一帧记忆”
+            # 第一帧没有上一帧，所以设为初始坐标和 0 修正量
+            prev_z_meas = b_obs[:, 0, :4]
+            prev_update = torch.zeros(b_obs.size(0), 8).to(device)
+            #  [新增]: 初始化 F1 和 F4 的“前一帧记忆”
+
             seq_len = b_obs.size(1)
             for t in range(1, seq_len):
                 pred_state = torch.matmul(current_state, F.T)
@@ -84,20 +90,28 @@ def train():
                 z_meas = b_obs[:, t, :4]
                 conf = b_obs[:, t, 4:5]
 
+                # F2: 新息差值 (原 innovation)
                 pred_meas = torch.matmul(pred_state, H.T)
                 innovation = z_meas - pred_meas
 
-                # 拼接输入: [B, 1, 5]
-                net_input = torch.cat([innovation, conf], dim=1).unsqueeze(1)
+                # 👇 [新增]: 计算 F1 和 F4
+                f1 = z_meas - prev_z_meas  # 观测差值
+                f2 = innovation  # 新息差值
+                f4 = prev_update  # 前向更新差值
 
-                # --- Neural Forward ---
-                # 这里的 hidden 会在时间步之间流动，包含 3 个解耦的隐状态
+                # 👇 [修改]: 拼接 17 维输入
+                # [Batch, 4+4+8+1 = 17] -> [Batch, 1, 17]
+                net_input = torch.cat([f1, f2, f4, conf], dim=1).unsqueeze(1)
+
                 k_gain, hidden = model(net_input, hidden)
 
                 innovation_expanded = innovation.unsqueeze(2)
-
                 update_term = torch.bmm(k_gain, innovation_expanded).squeeze(2)
                 current_state = pred_state + update_term
+
+                # 👇 [新增]: 关键！更新记忆，供下一帧循环使用
+                prev_z_meas = z_meas
+                prev_update = update_term
 
                 gt_pos = b_gt[:, t, :]
                 batch_loss += criterion(current_state[:, :4], gt_pos)
