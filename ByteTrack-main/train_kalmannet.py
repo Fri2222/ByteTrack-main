@@ -81,7 +81,6 @@ def train():
             # 第一帧没有上一帧，所以设为初始坐标和 0 修正量
             prev_z_meas = b_obs[:, 0, :4]
             prev_update = torch.zeros(b_obs.size(0), 8).to(device)
-            #  [新增]: 初始化 F1 和 F4 的“前一帧记忆”
 
             seq_len = b_obs.size(1)
             for t in range(1, seq_len):
