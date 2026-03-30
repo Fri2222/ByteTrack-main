@@ -18,7 +18,7 @@ def train():
     print(f"Training on device: {device}")
 
     BATCH_SIZE = 32
-    EPOCHS = 60  # 提高到 60 轮让 17 维充分收敛
+    EPOCHS = 60  # 提高到 60 轮充分收敛
     LR = 1e-3
     data_file_path = 'mot_train_data.pt'
 
@@ -43,7 +43,8 @@ def train():
     dataset = TensorDataset(train_obs, train_gt)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
-    model = KalmanNetNN().to(device)  # 默认读取 17 维
+    # 载入 13 维模型
+    model = KalmanNetNN().to(device)
     optimizer = optim.Adam(model.parameters(), lr=LR)
 
     # 余弦退火学习率调度器
@@ -56,7 +57,7 @@ def train():
         F[i, 4 + i] = dt
     H = torch.eye(4, 8).to(device)
 
-    print("Start Training KalmanNet (17D + Velocity Loss) ...")
+    print("Start Training KalmanNet (13D: F2+F4+Conf + Velocity Loss) ...")
     model.train()
 
     for epoch in range(EPOCHS):
@@ -69,8 +70,7 @@ def train():
             hidden = None
             batch_loss = 0
 
-            # 初始化 F1 和 F4 的“前一帧记忆”
-            prev_z_meas = b_obs[:, 0, :4]
+            # 只需要记录 F4 的前一帧记忆 (F1 已被抛弃)
             prev_update = torch.zeros(b_obs.size(0), 8).to(device)
 
             seq_len = b_obs.size(1)
@@ -80,7 +80,7 @@ def train():
                 z_meas = b_obs[:, t, :4]
                 conf = b_obs[:, t, 4:5]
 
-                # 适度的数据增强，强迫模型学会根据低 Conf 忽略突变
+                # 适度的数据增强，强迫模型学会根据低 Conf 忽略突变误差
                 if model.training and torch.rand(1).item() < 0.15:
                     conf = conf * 0.01
                     z_meas = z_meas + torch.randn_like(z_meas) * 0.02
@@ -88,23 +88,22 @@ def train():
                 pred_meas = torch.matmul(pred_state, H.T)
                 innovation = z_meas - pred_meas
 
-                # 提取 17 维特征
-                f1 = z_meas - prev_z_meas
+                # 提取 13 维黄金特征组合
                 f2 = innovation
                 f4 = prev_update
 
-                net_input = torch.cat([f1, f2, f4, conf], dim=1).unsqueeze(1)
+                # 拼接: [F2(4) + F4(8) + Conf(1)] = 13
+                net_input = torch.cat([f2, f4, conf], dim=1).unsqueeze(1)
                 k_gain, hidden = model(net_input, hidden)
 
                 innovation_expanded = innovation.unsqueeze(2)
                 update_term = torch.bmm(k_gain, innovation_expanded).squeeze(2)
                 current_state = pred_state + update_term
 
-                # 更新记忆供下一帧循环使用
-                prev_z_meas = z_meas
+                # 更新 F4 记忆供下一帧循环使用
                 prev_update = update_term
 
-                # === [核心约束：双重物理 Loss] ===
+                # === [核心防线：双重物理 Loss，杜绝框乱飞] ===
                 # 1. 位置监督
                 gt_pos = b_gt[:, t, :]
                 loss_pos = criterion(current_state[:, :4], gt_pos)
@@ -125,6 +124,7 @@ def train():
 
             total_loss += batch_loss.item()
 
+        # 更新学习率
         scheduler.step()
 
         avg_loss = total_loss / len(dataloader)

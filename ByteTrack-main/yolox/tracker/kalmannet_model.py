@@ -4,7 +4,8 @@ import torch.nn as nn
 # ==========================================
 # 🎯 全局维度宏定义 (Macros)
 # ==========================================
-KF_INPUT_DIM = 17  # F1(4维) + F2(4维) + F4(8维) + conf(1维) = 17 维
+# 彻底移除 F1。只保留 F2(4维) + F4(8维) + conf(1维) = 13 维
+KF_INPUT_DIM = 13
 KF_STATE_DIM = 8  # 状态空间维度 [x, y, a, h, vx, vy, va, vh]
 KF_OBS_DIM = 4  # 观测空间维度 [x, y, a, h]
 KF_HIDDEN_DIM = 80  # 隐藏状态大小
@@ -12,8 +13,9 @@ KF_HIDDEN_DIM = 80  # 隐藏状态大小
 
 class KalmanNetNN(nn.Module):
     """
-    Exp-009 (终极修正版):
-    17维输入。保留 fc_in 作为信号放大器，但坚决不用 ReLU，确保残差符号不消失。
+    Exp-011 (黄金13维版):
+    去除剧毒的 F1，保留残差 F2 与历史肌肉记忆 F4。
+    使用 Linear 放大信号，坚决不加 ReLU，确保残差的正负符号不丢失。
     """
 
     def __init__(self, input_dim=KF_INPUT_DIM, state_dim=KF_STATE_DIM, obs_dim=KF_OBS_DIM, hidden_dim=KF_HIDDEN_DIM):

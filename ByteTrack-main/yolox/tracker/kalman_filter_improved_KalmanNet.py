@@ -29,7 +29,8 @@ class ImprovedKalmanFilter(object):
 
         if KalmanNetNN is not None and os.path.exists(model_path):
             try:
-                self.net = KalmanNetNN(input_dim=17).to(self.device)
+                # 显式指定 13 维
+                self.net = KalmanNetNN(input_dim=13).to(self.device)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     checkpoint = torch.load(model_path, map_location=self.device)
@@ -118,14 +119,13 @@ class ImprovedKalmanFilter(object):
         innovation = measurement - projected_mean
         kalman_gain = None
 
-        # [核心防线]：背包被抛弃时，F1和F4必须彻底斩断
+        # [核心防线]：背包重置时，彻底清空遗留的 F4 记忆
         if hidden_state is None:
             gru_hidden = None
-            f1 = np.zeros(4)
             f4 = np.zeros(8)
         else:
-            gru_hidden, prev_measurement, prev_update_term = hidden_state
-            f1 = measurement - prev_measurement
+            # 即便外部传入了 prev_measurement，我们也直接忽略不用 (解耦 F1)
+            gru_hidden, _, prev_update_term = hidden_state
             f4 = prev_update_term
 
         new_gru_hidden = gru_hidden
@@ -136,14 +136,14 @@ class ImprovedKalmanFilter(object):
                 scale_4d = torch.tensor([[[1920., 1080., 1., 1080.]]], device=self.device)
                 scale_8d = torch.tensor([[[1920., 1080., 1., 1080., 1920., 1080., 1., 1080.]]], device=self.device)
 
-                f1_norm = torch.tensor(f1, dtype=torch.float32).view(1, 1, -1).to(self.device) / scale_4d
                 f2_norm = torch.tensor(f2, dtype=torch.float32).view(1, 1, -1).to(self.device) / scale_4d
                 f4_norm = torch.tensor(f4, dtype=torch.float32).view(1, 1, -1).to(self.device) / scale_8d
 
                 conf_val = confidence if confidence is not None else 1.0
                 conf_tensor = torch.tensor([[[conf_val]]], dtype=torch.float32, device=self.device)
 
-                net_input = torch.cat([f1_norm, f2_norm, f4_norm, conf_tensor], dim=-1)
+                # 仅拼接 13 维特征
+                net_input = torch.cat([f2_norm, f4_norm, conf_tensor], dim=-1)
 
                 with torch.no_grad():
                     k_tensor, new_gru_hidden = self.net(net_input, gru_hidden)
@@ -168,7 +168,7 @@ class ImprovedKalmanFilter(object):
         new_mean = mean + update_term
         new_covariance = covariance - np.linalg.multi_dot((kalman_gain, projected_cov, kalman_gain.T))
 
-        # 打包完整的 17 维所需记忆返回
+        # 打包完整的背包返回 (保留 measurement 站位，以兼容外层的解包逻辑)
         new_hidden_state_packaged = (new_gru_hidden, measurement, update_term)
         return new_mean, new_covariance, new_hidden_state_packaged
 
