@@ -35,6 +35,7 @@ B. 输入特征 (Input Features)传统 MB KF 及其变体利用底层统计特�
 | **Exp-011** | 2026-03-15 | `Exp-0011 架构2 F1、F2、F4三维输入；claude失败后改回gemini` |  | ** 17.4%** | **40.5% ** |
 | **Exp-012** | 2026-03-15 | `Exp-0012 架构2 F2、F4三维输入；gemini` |  | ** 71.1%** | **69.7%** |
 | **Exp-013** | 2026-03-30 | `Exp-0013 架构2 F2、F4三维输入；claude依据gemini框架修改` |  | ** 74.1%** | **75.1%** |
+| **Exp-014** | 2026-03-30 | `Exp-0014 架构2 F2、F4三维输入；codex版本` |  | ** 80.5% %** | **81.2% ** |
 
 
 
@@ -785,3 +786,69 @@ Epoch [56/60]  Train: 0.000202  Val: 0.000166  LR: 0.000021
 Epoch [58/60]  Train: 0.000202  Val: 0.000165  LR: 0.000013 ← best
 Epoch [60/60]  Train: 0.000202  Val: 0.000166  LR: 0.000010
 ✅ Training Complete. Best val_loss=0.000164, saved to pretrained/kalmannet_best.pth
+
+####################################################################################################################
+
+
+### Exp-0014
+- **Code Version**: `Exp-0014 架构2 F2、F4三维输入；codex版本
+
+- **Command**: 	'python prepare_mot_data.py'
+				'python train_kalmannet.py'
+				`python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse`
+				
+- **Output**:
+                Rcll  Prcn  GT    MT    PT    ML   FP    FN  IDs   FM  MOTA  MOTP num_objects
+MOT17-02-FRCNN 65.1% 90.7%  53 37.7% 43.4% 18.9% 6.7% 34.9% 0.5% 1.3% 57.9% 0.195        9880
+MOT17-04-FRCNN 96.0% 96.7%  69 89.9%  8.7%  1.4% 3.3%  4.0% 0.1% 0.3% 92.6% 0.126       24178
+MOT17-05-FRCNN 77.6% 95.9%  71 49.3% 36.6% 14.1% 3.3% 22.4% 0.7% 1.3% 73.6% 0.163        3357
+MOT17-09-FRCNN 82.3% 99.2%  22 72.7% 22.7%  4.5% 0.7% 17.7% 0.5% 0.9% 81.1% 0.152        2879
+MOT17-10-FRCNN 81.4% 94.8%  36 55.6% 41.7%  2.8% 4.4% 18.6% 0.7% 1.4% 76.3% 0.210        5923
+MOT17-11-FRCNN 82.2% 96.3%  44 52.3% 27.3% 20.5% 3.1% 17.8% 0.2% 0.6% 78.8% 0.128        4517
+MOT17-13-FRCNN 79.5% 95.4%  44 61.4% 20.5% 18.2% 3.8% 20.5% 0.3% 0.5% 75.4% 0.197        3156
+OVERALL        84.7% 95.6% 339 59.9% 28.3% 11.8% 3.9% 15.3% 0.3% 0.7% 80.5% 0.152       53890
+                IDF1   IDP   IDR  Rcll  Prcn  GT  MT PT ML   FP   FN IDs   FM  MOTA  MOTP IDt IDa IDm num_objects
+MOT17-02-FRCNN 61.6% 73.7% 52.9% 65.1% 90.7%  53  20 23 10  659 3449  49  126 57.9% 0.195  43  12  10        9880
+MOT17-04-FRCNN 91.9% 92.3% 91.6% 96.0% 96.7%  69  62  6  1  792  979  25   74 92.6% 0.126  14  11   3       24178
+MOT17-05-FRCNN 74.6% 83.4% 67.5% 77.6% 95.9%  71  35 26 10  111  751  25   44 73.6% 0.163  29   6  11        3357
+MOT17-09-FRCNN 75.6% 83.3% 69.1% 82.3% 99.2%  22  16  5  1   20  511  14   26 81.1% 0.152  16   3   5        2879
+MOT17-10-FRCNN 74.3% 80.4% 69.0% 81.4% 94.8%  36  20 15  1  263 1100  41   83 76.3% 0.210  24  20  10        5923
+MOT17-11-FRCNN 75.7% 82.2% 70.1% 82.2% 96.3%  44  23 12  9  141  804  11   29 78.8% 0.128   5   8   2        4517
+MOT17-13-FRCNN 81.9% 90.1% 75.1% 79.5% 95.4%  44  27  9  8  120  647  10   17 75.4% 0.197   9   3   3        3156
+OVERALL        81.2% 86.4% 76.5% 84.7% 95.6% 339 203 96 40 2106 8241 175  399 80.5% 0.152 140  63  44       53890
+
+
+INFO Found real data file: mot_train_data.pt
+Train: 3704 samples  |  Val: 411 samples
+Start Training KalmanNet (Residual K on top of classical KF) ...
+Epoch [2/60]  Train: 0.000969  Val: 0.000958  LR: 0.000997 <- best
+Epoch [4/60]  Train: 0.000967  Val: 0.000958  LR: 0.000989
+Epoch [6/60]  Train: 0.000970  Val: 0.000957  LR: 0.000976 <- best
+Epoch [8/60]  Train: 0.000966  Val: 0.000957  LR: 0.000957 <- best
+Epoch [10/60]  Train: 0.000969  Val: 0.000957  LR: 0.000934
+Epoch [12/60]  Train: 0.000966  Val: 0.000957  LR: 0.000905
+Epoch [14/60]  Train: 0.000965  Val: 0.000957  LR: 0.000873
+Epoch [16/60]  Train: 0.000967  Val: 0.000957  LR: 0.000836
+Epoch [18/60]  Train: 0.000964  Val: 0.000957  LR: 0.000796 <- best
+Epoch [20/60]  Train: 0.000963  Val: 0.000957  LR: 0.000753
+Epoch [22/60]  Train: 0.000962  Val: 0.000957  LR: 0.000706 <- best
+Epoch [24/60]  Train: 0.000962  Val: 0.000957  LR: 0.000658
+Epoch [26/60]  Train: 0.000961  Val: 0.000957  LR: 0.000608 <- best
+Epoch [28/60]  Train: 0.000965  Val: 0.000957  LR: 0.000557
+Epoch [30/60]  Train: 0.000963  Val: 0.000957  LR: 0.000505
+Epoch [32/60]  Train: 0.000961  Val: 0.000957  LR: 0.000453
+Epoch [34/60]  Train: 0.000961  Val: 0.000956  LR: 0.000402 <- best
+Epoch [36/60]  Train: 0.000962  Val: 0.000957  LR: 0.000352
+Epoch [38/60]  Train: 0.000962  Val: 0.000956  LR: 0.000304 <- best
+Epoch [40/60]  Train: 0.000960  Val: 0.000956  LR: 0.000258 <- best
+Epoch [42/60]  Train: 0.000965  Val: 0.000956  LR: 0.000214 <- best
+Epoch [44/60]  Train: 0.000962  Val: 0.000957  LR: 0.000174
+Epoch [46/60]  Train: 0.000962  Val: 0.000956  LR: 0.000137
+Epoch [48/60]  Train: 0.000957  Val: 0.000956  LR: 0.000105
+Epoch [50/60]  Train: 0.000960  Val: 0.000956  LR: 0.000076
+Epoch [52/60]  Train: 0.000960  Val: 0.000956  LR: 0.000053
+Epoch [54/60]  Train: 0.000959  Val: 0.000956  LR: 0.000034
+Epoch [56/60]  Train: 0.000961  Val: 0.000956  LR: 0.000021
+Epoch [58/60]  Train: 0.000961  Val: 0.000956  LR: 0.000013
+Epoch [60/60]  Train: 0.000959  Val: 0.000956  LR: 0.000010
+Training Complete. Best val_loss=0.000956, saved to pretrained/kalmannet_best.pth

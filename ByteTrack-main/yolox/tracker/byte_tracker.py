@@ -56,8 +56,9 @@ class STrack(BaseTrack):
         self.start_frame = frame_id
 
     def re_activate(self, new_track, frame_id, new_id=False):
-        # 👇 [最核心的保命锁]：绝对不能丢！清空长途跋涉后的错乱记忆
-        self.kf_hidden_state = None
+        lost_frames = frame_id - self.frame_id
+        if lost_frames > 3:
+            self.kf_hidden_state = None
 
         self.mean, self.covariance, self.kf_hidden_state = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh),
