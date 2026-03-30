@@ -13,9 +13,9 @@ KF_HIDDEN_DIM = 80  # 隐藏状态大小
 
 class KalmanNetNN(nn.Module):
     """
-    Exp-011 (黄金13维版):
-    去除剧毒的 F1，保留残差 F2 与历史肌肉记忆 F4。
-    使用 Linear 放大信号，坚决不加 ReLU，确保残差的正负符号不丢失。
+    13维输入版 (F2+F4+Conf)：去除剧毒的 F1，保留新息残差 F2 与历史修正记忆 F4。
+    fc_in 层使用 Tanh 激活：既保留残差正负符号（不截断负值），又引入非线性，
+    与 KalmanNet 论文原始实现一致。ReLU 仅用在输出层（特征高度抽象后）。
     """
 
     def __init__(self, input_dim=KF_INPUT_DIM, state_dim=KF_STATE_DIM, obs_dim=KF_OBS_DIM, hidden_dim=KF_HIDDEN_DIM):
@@ -57,17 +57,17 @@ class KalmanNetNN(nn.Module):
         else:
             h_q_0, h_sigma_0, h_s_0 = hidden_states
 
-        # [第一级] 核心：先用 Linear 放大信号，绝对不加 ReLU！
-        x1 = self.fc_in1(inputs)
+        # [第一级] Tanh 放大信号：保留残差正负符号的同时引入非线性（论文原始实现）
+        x1 = torch.tanh(self.fc_in1(inputs))
         out_q, h_q_n = self.gru_q(x1, h_q_0)
 
         # [第二级]
-        x2 = self.fc_in2(inputs)
+        x2 = torch.tanh(self.fc_in2(inputs))
         gru_sigma_input = torch.cat([x2, out_q], dim=-1)
         out_sigma, h_sigma_n = self.gru_sigma(gru_sigma_input, h_sigma_0)
 
         # [第三级]
-        x3 = self.fc_in3(inputs)
+        x3 = torch.tanh(self.fc_in3(inputs))
         sigma_mapped = self.fc_sigma_to_s(out_sigma)
         gru_s_input = torch.cat([x3, sigma_mapped], dim=-1)
         out_s, h_s_n = self.gru_s(gru_s_input, h_s_0)
