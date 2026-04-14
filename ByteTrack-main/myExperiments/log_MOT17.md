@@ -36,7 +36,7 @@ B. 输入特征 (Input Features)传统 MB KF 及其变体利用底层统计特�
 | **Exp-012** | 2026-03-15 | `Exp-0012 架构2 F2、F4三维输入；gemini` |  | ** 71.1%** | **69.7%** |
 | **Exp-013** | 2026-03-30 | `Exp-0013 架构2 F2、F4三维输入；claude依据gemini框架修改` |  | ** 74.1%** | **75.1%** |
 | **Exp-014** | 2026-03-30 | `Exp-0014 架构2 F2、F4三维输入；codex版本` |  | ** 80.5% %** | **81.2% ** |
-
+| **Exp-015** | 2026-04-14 | `Exp-0015 修改训练策略，先短轨迹训练40轮后长轨迹训练20轮 修复HOTA计算脚本 架构2 F2、F4二维输入；codex版本` |  | ** 80.4% %** | **81.3% ** |
 
 
 ###################################################################################################################
@@ -791,11 +791,14 @@ Epoch [60/60]  Train: 0.000202  Val: 0.000166  LR: 0.000010
 
 
 ### Exp-0014
-- **Code Version**: `Exp-0014 架构2 F2、F4三维输入；codex版本
+- **Code Version**: `Exp-0014 架构2 F2、F4二维输入；codex版本
+					·Exp-014 和 Exp-012/013 的本质区别，不是简单“网络更深”或者“训练更久”
+					而是把 KalmanNet 的角色从“暴力替代传统 KF”改成了“在传统 KF 基础上做小幅、受约束的残差修正”
 
 - **Command**: 	'python prepare_mot_data.py'
 				'python train_kalmannet.py'
-				`python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse`
+				'python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse`
+				'python eval_custom.py
 				
 - **Output**:
                 Rcll  Prcn  GT    MT    PT    ML   FP    FN  IDs   FM  MOTA  MOTP num_objects
@@ -853,8 +856,175 @@ Epoch [58/60]  Train: 0.000961  Val: 0.000956  LR: 0.000013
 Epoch [60/60]  Train: 0.000959  Val: 0.000956  LR: 0.000010
 Training Complete. Best val_loss=0.000956, saved to pretrained/kalmannet_best.pth
 
+####################################################################################################################
+
+
+### Exp-0014补丁
+- **Code Version**: `Exp-0014补丁 增加HOTA计算脚本 架构2 F2、F4二维输入；codex版本
+
+- **Command**: 	'python prepare_mot_data.py'
+				'python train_kalmannet.py'
+				'python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse`
+				'python eval_custom.py
+				
+- **Output**:
+
+                Rcll  Prcn  GT    MT    PT    ML   FP    FN  IDs   FM  MOTA  MOTP num_objects
+MOT17-02-FRCNN 64.8% 90.6%  53 37.7% 43.4% 18.9% 6.7% 35.2% 0.5% 1.3% 57.5% 0.194        9880
+MOT17-04-FRCNN 96.0% 96.7%  69 89.9%  8.7%  1.4% 3.3%  4.0% 0.1% 0.3% 92.6% 0.126       24178
+MOT17-05-FRCNN 77.6% 95.9%  71 49.3% 36.6% 14.1% 3.3% 22.4% 0.7% 1.3% 73.6% 0.163        3357
+MOT17-09-FRCNN 82.3% 99.2%  22 72.7% 22.7%  4.5% 0.7% 17.7% 0.5% 0.9% 81.1% 0.152        2879
+MOT17-10-FRCNN 81.5% 94.9%  36 55.6% 41.7%  2.8% 4.4% 18.5% 0.7% 1.4% 76.4% 0.210        5923
+MOT17-11-FRCNN 82.2% 96.3%  44 52.3% 27.3% 20.5% 3.1% 17.8% 0.2% 0.6% 78.8% 0.128        4517
+MOT17-13-FRCNN 79.5% 95.5%  44 61.4% 20.5% 18.2% 3.7% 20.5% 0.3% 0.5% 75.5% 0.196        3156
+OVERALL        84.7% 95.6% 339 59.9% 28.3% 11.8% 3.9% 15.3% 0.3% 0.7% 80.4% 0.152       53890
+                IDF1   IDP   IDR  Rcll  Prcn  GT  MT PT ML   FP   FN IDs   FM  MOTA  MOTP IDt IDa IDm num_objects
+MOT17-02-FRCNN 61.1% 73.2% 52.4% 64.8% 90.6%  53  20 23 10  665 3482  49  124 57.5% 0.194  36  16   9        9880
+MOT17-04-FRCNN 91.4% 91.8% 91.1% 96.0% 96.7%  69  62  6  1  790  977  28   75 92.6% 0.126  14  12   3       24178
+MOT17-05-FRCNN 74.7% 83.5% 67.6% 77.6% 95.9%  71  35 26 10  112  752  23   44 73.6% 0.163  28   5  11        3357
+MOT17-09-FRCNN 75.6% 83.3% 69.1% 82.3% 99.2%  22  16  5  1   20  511  14   27 81.1% 0.152  15   4   5        2879
+MOT17-10-FRCNN 74.4% 80.5% 69.1% 81.5% 94.9%  36  20 15  1  259 1096  41   83 76.4% 0.210  24  20  10        5923
+MOT17-11-FRCNN 75.7% 82.2% 70.1% 82.2% 96.3%  44  23 12  9  142  805  11   29 78.8% 0.128   5   8   2        4517
+MOT17-13-FRCNN 82.3% 90.6% 75.4% 79.5% 95.5%  44  27  9  8  118  646   9   17 75.5% 0.196   8   3   3        3156
+OVERALL        80.9% 86.1% 76.3% 84.7% 95.6% 339 203 96 40 2106 8269 175  399 80.4% 0.152 130  68  43       53890
+
+INFO Found real data file: mot_train_data.pt
+Train: 3704 samples  |  Val: 411 samples
+Start Training KalmanNet (Residual K on top of classical KF) ...
+Epoch [2/60]  Train: 0.000968  Val: 0.000958  LR: 0.000997
+Epoch [4/60]  Train: 0.000968  Val: 0.000961  LR: 0.000989
+Epoch [6/60]  Train: 0.000970  Val: 0.000957  LR: 0.000976
+Epoch [8/60]  Train: 0.000968  Val: 0.000958  LR: 0.000957
+Epoch [10/60]  Train: 0.000968  Val: 0.000958  LR: 0.000934
+Epoch [12/60]  Train: 0.000967  Val: 0.000957  LR: 0.000905 <- best
+Epoch [14/60]  Train: 0.000963  Val: 0.000958  LR: 0.000873
+Epoch [16/60]  Train: 0.000965  Val: 0.000957  LR: 0.000836
+Epoch [18/60]  Train: 0.000963  Val: 0.000957  LR: 0.000796
+Epoch [20/60]  Train: 0.000964  Val: 0.000957  LR: 0.000753
+Epoch [22/60]  Train: 0.000963  Val: 0.000957  LR: 0.000706
+Epoch [24/60]  Train: 0.000963  Val: 0.000957  LR: 0.000658 <- best
+Epoch [26/60]  Train: 0.000967  Val: 0.000957  LR: 0.000608
+Epoch [28/60]  Train: 0.000965  Val: 0.000957  LR: 0.000557
+Epoch [30/60]  Train: 0.000962  Val: 0.000957  LR: 0.000505
+Epoch [32/60]  Train: 0.000962  Val: 0.000957  LR: 0.000453 <- best
+Epoch [34/60]  Train: 0.000962  Val: 0.000957  LR: 0.000402 <- best
+Epoch [36/60]  Train: 0.000961  Val: 0.000957  LR: 0.000352 <- best
+Epoch [38/60]  Train: 0.000963  Val: 0.000957  LR: 0.000304
+Epoch [40/60]  Train: 0.000963  Val: 0.000957  LR: 0.000258 <- best
+Epoch [42/60]  Train: 0.000962  Val: 0.000957  LR: 0.000214 <- best
+Epoch [44/60]  Train: 0.000959  Val: 0.000957  LR: 0.000174 <- best
+Epoch [46/60]  Train: 0.000962  Val: 0.000957  LR: 0.000137 <- best
+Epoch [48/60]  Train: 0.000961  Val: 0.000957  LR: 0.000105 <- best
+Epoch [50/60]  Train: 0.000960  Val: 0.000957  LR: 0.000076
+Epoch [52/60]  Train: 0.000965  Val: 0.000957  LR: 0.000053
+Epoch [54/60]  Train: 0.000962  Val: 0.000957  LR: 0.000034
+Epoch [56/60]  Train: 0.000962  Val: 0.000957  LR: 0.000021
+Epoch [58/60]  Train: 0.000962  Val: 0.000957  LR: 0.000013
+Epoch [60/60]  Train: 0.000962  Val: 0.000956  LR: 0.000010
+
 =========================================================================================================
 Method                HOTA    DetA    AssA    MOTA    IDF1   Recall     Prec      IDs       FP       FN
 ---------------------------------------------------------------------------------------------------------
 KalmanNet-Ours      69.05%  68.85%  69.97%  80.73%  80.97%   84.67%   95.91%      179     1944     8260
 =========================================================================================================
+
+####################################################################################################################
+
+
+### Exp-0015
+- **Code Version**: `Exp-0015 修改训练策略，先短轨迹训练40轮后长轨迹训练20轮 修复HOTA计算脚本 架构2 F2、F4二维输入；codex版本
+
+- **Command**: 	'python prepare_mot_data.py'
+				'python train_kalmannet.py'
+				'python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse`
+				'python eval_custom.py
+				
+- **Output**:
+                Rcll  Prcn  GT    MT    PT    ML   FP    FN  IDs   FM  MOTA  MOTP num_objects
+MOT17-02-FRCNN 64.8% 90.6%  53 39.6% 39.6% 20.8% 6.7% 35.2% 0.5% 1.3% 57.6% 0.194        9880
+MOT17-04-FRCNN 96.0% 96.7%  69 89.9%  8.7%  1.4% 3.2%  4.0% 0.1% 0.3% 92.6% 0.126       24178
+MOT17-05-FRCNN 77.6% 95.8%  71 49.3% 36.6% 14.1% 3.4% 22.4% 0.7% 1.3% 73.5% 0.163        3357
+MOT17-09-FRCNN 82.3% 99.2%  22 72.7% 22.7%  4.5% 0.7% 17.7% 0.5% 0.9% 81.1% 0.152        2879
+MOT17-10-FRCNN 81.5% 94.9%  36 55.6% 41.7%  2.8% 4.4% 18.5% 0.7% 1.4% 76.4% 0.210        5923
+MOT17-11-FRCNN 81.9% 96.7%  44 50.0% 29.5% 20.5% 2.8% 18.1% 0.2% 0.6% 78.8% 0.127        4517
+MOT17-13-FRCNN 79.5% 95.4%  44 61.4% 20.5% 18.2% 3.8% 20.5% 0.3% 0.6% 75.3% 0.196        3156
+OVERALL        84.6% 95.6% 339 59.9% 28.0% 12.1% 3.9% 15.4% 0.3% 0.7% 80.4% 0.152       53890
+                IDF1   IDP   IDR  Rcll  Prcn  GT  MT PT ML   FP   FN IDs   FM  MOTA  MOTP IDt IDa IDm num_objects
+MOT17-02-FRCNN 60.9% 73.1% 52.2% 64.8% 90.6%  53  21 21 11  662 3482  47  128 57.6% 0.194  40  15  11        9880
+MOT17-04-FRCNN 92.1% 92.4% 91.7% 96.0% 96.7%  69  62  6  1  783  976  26   72 92.6% 0.126  14  10   3       24178
+MOT17-05-FRCNN 74.6% 83.4% 67.5% 77.6% 95.8%  71  35 26 10  113  753  25   44 73.5% 0.163  29   6  11        3357
+MOT17-09-FRCNN 75.6% 83.4% 69.2% 82.3% 99.2%  22  16  5  1   20  511  14   27 81.1% 0.152  16   3   5        2879
+MOT17-10-FRCNN 75.9% 82.2% 70.6% 81.5% 94.9%  36  20 15  1  260 1097  42   80 76.4% 0.210  24  20  10        5923
+MOT17-11-FRCNN 75.6% 82.4% 69.8% 81.9% 96.7%  44  22 13  9  127  819  11   28 78.8% 0.127   4   8   1        4517
+MOT17-13-FRCNN 81.9% 90.1% 75.1% 79.5% 95.4%  44  27  9  8  121  648  10   18 75.3% 0.196   9   3   3        3156
+OVERALL        81.3% 86.6% 76.6% 84.6% 95.6% 339 203 95 41 2086 8286 175  397 80.4% 0.152 136  65  44       53890
+
+INFO Found legacy short-window dataset.
+Legacy short samples: train=3704, val=411
+Start Stage-1 Short BPTT ...
+Stage-1 Short BPTT Epoch [1/40]  Train: 0.000969  Val: 0.000956  LR: 0.000998 <- best
+Stage-1 Short BPTT Epoch [2/40]  Train: 0.000968  Val: 0.000956  LR: 0.000994
+Stage-1 Short BPTT Epoch [4/40]  Train: 0.000969  Val: 0.000957  LR: 0.000976
+Stage-1 Short BPTT Epoch [6/40]  Train: 0.000968  Val: 0.000956  LR: 0.000946
+Stage-1 Short BPTT Epoch [8/40]  Train: 0.000965  Val: 0.000956  LR: 0.000905
+Stage-1 Short BPTT Epoch [10/40]  Train: 0.000966  Val: 0.000956  LR: 0.000855
+Stage-1 Short BPTT Epoch [12/40]  Train: 0.000962  Val: 0.000956  LR: 0.000796 <- best
+Stage-1 Short BPTT Epoch [14/40]  Train: 0.000963  Val: 0.000956  LR: 0.000730 <- best
+Stage-1 Short BPTT Epoch [16/40]  Train: 0.000962  Val: 0.000956  LR: 0.000658 <- best
+Stage-1 Short BPTT Epoch [18/40]  Train: 0.000961  Val: 0.000956  LR: 0.000582
+Stage-1 Short BPTT Epoch [20/40]  Train: 0.000961  Val: 0.000956  LR: 0.000505 <- best
+Stage-1 Short BPTT Epoch [22/40]  Train: 0.000962  Val: 0.000955  LR: 0.000428
+Stage-1 Short BPTT Epoch [24/40]  Train: 0.000960  Val: 0.000955  LR: 0.000352
+Stage-1 Short BPTT Epoch [26/40]  Train: 0.000962  Val: 0.000955  LR: 0.000280
+Stage-1 Short BPTT Epoch [28/40]  Train: 0.000961  Val: 0.000955  LR: 0.000214
+Stage-1 Short BPTT Epoch [30/40]  Train: 0.000961  Val: 0.000955  LR: 0.000155
+Stage-1 Short BPTT Epoch [32/40]  Train: 0.000958  Val: 0.000955  LR: 0.000105
+Stage-1 Short BPTT Epoch [34/40]  Train: 0.000961  Val: 0.000955  LR: 0.000064 <- best
+Stage-1 Short BPTT Epoch [36/40]  Train: 0.000959  Val: 0.000955  LR: 0.000034
+Stage-1 Short BPTT Epoch [38/40]  Train: 0.000962  Val: 0.000955  LR: 0.000016
+Stage-1 Short BPTT Epoch [40/40]  Train: 0.000962  Val: 0.000955  LR: 0.000010
+Start Stage-2 Full BPTT Fine-tune ...
+Stage-2 Full BPTT Fine-tune Epoch [1/20]  Train: 0.000961  Val: 0.000955  LR: 0.000199
+Stage-2 Full BPTT Fine-tune Epoch [2/20]  Train: 0.000961  Val: 0.000955  LR: 0.000195 <- best
+Stage-2 Full BPTT Fine-tune Epoch [4/20]  Train: 0.000961  Val: 0.000955  LR: 0.000182
+Stage-2 Full BPTT Fine-tune Epoch [6/20]  Train: 0.000959  Val: 0.000955  LR: 0.000161
+Stage-2 Full BPTT Fine-tune Epoch [8/20]  Train: 0.000961  Val: 0.000955  LR: 0.000134
+Stage-2 Full BPTT Fine-tune Epoch [10/20]  Train: 0.000961  Val: 0.000955  LR: 0.000105
+Stage-2 Full BPTT Fine-tune Epoch [12/20]  Train: 0.000959  Val: 0.000955  LR: 0.000076 <- best
+Stage-2 Full BPTT Fine-tune Epoch [14/20]  Train: 0.000960  Val: 0.000955  LR: 0.000049 <- best
+Stage-2 Full BPTT Fine-tune Epoch [16/20]  Train: 0.000959  Val: 0.000955  LR: 0.000028 <- best
+Stage-2 Full BPTT Fine-tune Epoch [18/20]  Train: 0.000958  Val: 0.000955  LR: 0.000015
+Stage-2 Full BPTT Fine-tune Epoch [20/20]  Train: 0.000962  Val: 0.000955  LR: 0.000010
+Training complete. Best val_loss=0.000955, saved to pretrained/kalmannet_best.pth
+
+============================================================================================================================================
+Method                HOTA    DetA    AssA    MOTA    IDF1     IDP     IDR   Recall     Prec    IDSWs       FP       FN     MT     PT     ML
+--------------------------------------------------------------------------------------------------------------------------------------------
+KalmanNet-Ours      69.29%  68.66%  70.65%  80.66%  81.36%  86.75%  76.60%   84.64%   95.87%      177     1967     8276    200     99     40
+=================================================================================================================
+
+
+下一步计划
+先把 long-track 数据链路真正跑通
+这是当前最该做的，因为 Exp-015 还没真正验证“短到长”的完整价值。
+
+加训练监控，而不是盲目继续试新结构
+建议至少记录：
+
+delta_k 的均值和方差
+||delta_k|| / ||k_classic||
+不同 conf 区间下的验证 loss
+遮挡片段上的单独指标
+做一个受控特征消融实验
+只测这三组就够了：
+
+F2 + conf
+F2 + F4 + conf
+F1 branch + F2 + F4 + conf
+不用再一次性开太多变量，不然很难知道到底是谁起作用。
+
+对长轨阶段改成“短轨 warmup + 部分长轨 + 全长轨”三阶段
+因为直接 full BPTT 有时对稳定性反而不好，可以更平滑一点。
+
+给 stage-2 单独降低学习率并加早停
+你现在已经降了 lr，这很好。下一步可以直接按 long-track val loss 或 long-track IDF1 surrogate 早停。

@@ -15,6 +15,7 @@ import os
 import random
 import warnings
 import glob
+import re
 import motmetrics as mm
 from collections import OrderedDict
 from pathlib import Path
@@ -125,6 +126,11 @@ def compare_dataframes(gts, ts):
     return accs, names
 
 
+def is_mot_result_file(path):
+    name = os.path.basename(path)
+    return re.match(r"^MOT\d{2}-\d{2}-(FRCNN|DPM|SDP)\.txt$", name) is not None
+
+
 @logger.catch
 def main(exp, args, num_gpu):
     if args.seed is not None:
@@ -231,7 +237,10 @@ def main(exp, args, num_gpu):
     else:
         gtfiles = glob.glob(os.path.join('datasets/mot/train', '*/gt/gt{}.txt'.format(gt_type)))
     print('gt_files', gtfiles)
-    tsfiles = [f for f in glob.glob(os.path.join(results_folder, '*.txt')) if not os.path.basename(f).startswith('eval')]
+    tsfiles = [
+        f for f in glob.glob(os.path.join(results_folder, '*.txt'))
+        if is_mot_result_file(f)
+    ]
 
     logger.info('Found {} groundtruths and {} test files.'.format(len(gtfiles), len(tsfiles)))
     logger.info('Available LAP solvers {}'.format(mm.lap.available_solvers))
