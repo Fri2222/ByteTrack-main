@@ -1,0 +1,35 @@
+[33m3f6803b[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mKalmanNet[m[33m, [m[1;31morigin/KalmanNet[m[33m)[m HEAD@{0}: commit (amend): | Exp-0015 修改训练策略，先短轨迹训练40轮后长轨迹训练20轮 修复HOTA计算脚本 架构2 F2、F4二维输入；codex版本 | | ** 80.4% %** | **81.3% ** |
+[33mcf5acdf[m HEAD@{1}: commit: | **Exp-004** | 2026-04-14 | Exp-004 随机轨迹但轨迹过固定点 | 多导弹 |
+[33m73fe5a7[m HEAD@{2}: commit: Exp-0014补丁 增加HOTA计算脚本 架构2 F2、F4三维输入；codex版本 | | ** 80.5% %** | **81.2% ** |
+[33mdd8bef7[m HEAD@{3}: commit: Exp-0014 架构2 F2、F4三维输入；codex版本 | | ** 80.5% %** | **81.2% ** |
+[33mf7714a8[m HEAD@{4}: commit: Exp-0013 架构2 F2、F4三维输入；claude依据gemini框架修改| ** 74.1%** | **75.1%** |
+[33m7c75c4b[m HEAD@{5}: commit: Exp-0012 架构2 F2、F4三维输入；gemini
+[33mcfa94f4[m HEAD@{6}: commit: Exp-0011 架构2 F1、F2、F4三维输入；claude失败后改回gemini
+[33me293bd9[m HEAD@{7}: commit: EXP0010 修改前备份，此实验MOTA 72.6%
+[33m584cdde[m HEAD@{8}: checkout: moving from exp008_test to KalmanNet
+[33m9709d2c[m[33m ([m[1;31morigin/exp008_test[m[33m, [m[1;32mexp008_test[m[33m)[m HEAD@{9}: checkout: moving from KalmanNet to exp008_test
+[33m584cdde[m HEAD@{10}: checkout: moving from exp008_test to KalmanNet
+[33m9709d2c[m[33m ([m[1;31morigin/exp008_test[m[33m, [m[1;32mexp008_test[m[33m)[m HEAD@{11}: commit: Exp-009 架构2 但是kalmannet_best.pth丢失 工程文件均为revert找回的 修改隐藏状态的大小为80，去掉所有的预处理全连接层 (fc_in) 和 ReLU，防止残差符号消失
+[33mc67ce20[m HEAD@{12}: checkout: moving from KalmanNet to exp008_test
+[33m584cdde[m HEAD@{13}: reset: moving to HEAD
+[33m584cdde[m HEAD@{14}: commit: Exp-0010 架构2 F1、F2、F4三维输入
+[33mc67ce20[m HEAD@{15}: commit: Exp-008修正 架构1 修改隐藏状态的大小为80
+[33m4705083[m HEAD@{16}: commit: Exp-007修正 修改KalmanNet架构为三层GRU，之前所有实验的数据都有误。
+[33m9a40040[m HEAD@{17}: commit: Exp-007 | 修改KalmanNet架构为三层GRU
+[33me30c9e7[m HEAD@{18}: commit: Exp-006 添加注释版
+[33md1c36b2[m HEAD@{19}: commit: | **Exp-006** | 2026-01-28 | Exp-005基础上修改KalmanNet | MOT 训练的KalmanNet | ** 80.4%** | **79.7%** |
+[33md0dbef5[m HEAD@{20}: checkout: moving from KalmanNet to KalmanNet
+[33md0dbef5[m HEAD@{21}: commit: | **Exp-005** | 2026-01-28 | Exp-004修改 基础上修改KalmanNet | 随机数据 训练的KalmanNet | ** 80.3%** | **79.3%** |
+[33mfe0a84c[m HEAD@{22}: checkout: moving from KalmanNet to KalmanNet
+[33mfe0a84c[m HEAD@{23}: commit: Exp-004存在致命错误，byte_tracker.py文件中没将卡尔曼滤波器切换到kalman_filter_improved_KalmanNet.py的kalmanNet上，目前MOT-4.9%
+[33m3802e90[m HEAD@{24}: commit: **Exp-004** | 2026-01-21 | Exp-003基础上修改KalmanNet | MOT 训练的KalmanNet |
+[33mf18eb5b[m HEAD@{25}: commit (merge): **Exp-003** | 2026-01-21 | Exp-001基础上添加依据MOT训练的KalmanNet | MOT 训练的KalmanNet
+[33m590ee3c[m HEAD@{26}: checkout: moving from KalmanNet to KalmanNet
+[33m590ee3c[m HEAD@{27}: commit (amend): **Exp-003** | 2026-01-21 | Exp-001基础上添加依据MOT训练的KalmanNet | MOT 训练的KalmanNet
+[33m3d11a67[m[33m ([m[1;31morigin/KF[m[33m, [m[1;32mmaster[m[33m, [m[1;32mKF[m[33m)[m HEAD@{28}: checkout: moving from KF to KalmanNet
+[33m3d11a67[m[33m ([m[1;31morigin/KF[m[33m, [m[1;32mmaster[m[33m, [m[1;32mKF[m[33m)[m HEAD@{29}: checkout: moving from master to KF
+[33m3d11a67[m[33m ([m[1;31morigin/KF[m[33m, [m[1;32mmaster[m[33m, [m[1;32mKF[m[33m)[m HEAD@{30}: commit (amend): 改进KF策略：总体IDF1提升至79.6%，MOTA提升至80.3%。误检减少56例，漏检减少21例，显著改善了MOT17-02和MOT17-05的ID稳定性。
+[33m159b93b[m[33m ([m[1;31morigin/master[m[33m)[m HEAD@{31}: commit (amend): 优化卡尔曼滤波参数，整体性能提升：1. 总体 MOTA 从 26.3% 提升至 26.5% (+0.2%)2. 总体 IDF1 从 51.4% 提升至 51.7% (+0.3%)3. 误检数 (FP) 显著下降 (15313 -> 15155)，减少了 158 个4. 整体跟踪精度 (Precision) 提升了 0.2%
+[33m7068754[m HEAD@{32}: commit: 改进了卡尔曼滤波性能改变如下优化卡尔曼滤波参数，整体性能提升：
+[33m661ca7f[m HEAD@{33}: commit (amend): Backup code (no videos)
+[33m2f606dc[m HEAD@{34}: commit (initial): First backup code

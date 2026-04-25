@@ -1,4 +1,3 @@
-
 from loguru import logger
 
 import torch
@@ -116,7 +115,7 @@ def compare_dataframes(gts, ts):
     accs = []
     names = []
     for k, tsacc in ts.items():
-        if k in gts:            
+        if k in gts:
             logger.info('Comparing {}...'.format(k))
             accs.append(mm.utils.compare_to_groundtruth(gts[k], tsacc, 'iou', distth=0.5))
             names.append(k)
@@ -169,7 +168,7 @@ def main(exp, args, num_gpu):
 
     model = exp.get_model()
     logger.info("Model Summary: {}".format(get_model_info(model, exp.test_size)))
-    #logger.info("Model Structure:\n{}".format(str(model)))
+    # logger.info("Model Structure:\n{}".format(str(model)))
 
     val_loader = exp.get_eval_loader(args.batch_size, is_distributed, args.test)
     evaluator = MOTEvaluator(
@@ -179,7 +178,7 @@ def main(exp, args, num_gpu):
         confthre=exp.test_conf,
         nmsthre=exp.nmsthre,
         num_classes=exp.num_classes,
-        )
+    )
 
     torch.cuda.set_device(rank)
     model.cuda(rank)
@@ -206,7 +205,7 @@ def main(exp, args, num_gpu):
 
     if args.trt:
         assert (
-            not args.fuse and not is_distributed and args.batch_size == 1
+                not args.fuse and not is_distributed and args.batch_size == 1
         ), "TensorRT model is not support model fusing and distributed inferencing!"
         trt_file = os.path.join(file_name, "model_trt.pth")
         assert os.path.exists(
@@ -246,13 +245,15 @@ def main(exp, args, num_gpu):
     logger.info('Available LAP solvers {}'.format(mm.lap.available_solvers))
     logger.info('Default LAP solver \'{}\''.format(mm.lap.default_solver))
     logger.info('Loading files.')
-    
+
     gt = OrderedDict([(Path(f).parts[-3], mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=1)) for f in gtfiles])
-    ts = OrderedDict([(os.path.splitext(Path(f).parts[-1])[0], mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=-1)) for f in tsfiles])    
-    
-    mh = mm.metrics.create()    
+    ts = OrderedDict(
+        [(os.path.splitext(Path(f).parts[-1])[0], mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=-1)) for f in
+         tsfiles])
+
+    mh = mm.metrics.create()
     accs, names = compare_dataframes(gt, ts)
-    
+
     logger.info('Running metrics')
     metrics = ['recall', 'precision', 'num_unique_objects', 'mostly_tracked',
                'partially_tracked', 'mostly_lost', 'num_false_positives', 'num_misses',
@@ -260,7 +261,7 @@ def main(exp, args, num_gpu):
     summary = mh.compute_many(accs, names=names, metrics=metrics, generate_overall=True)
     # summary = mh.compute_many(accs, names=names, metrics=mm.metrics.motchallenge_metrics, generate_overall=True)
     # print(mm.io.render_summary(
-    #   summary, formatters=mh.formatters, 
+    #   summary, formatters=mh.formatters,
     #   namemap=mm.io.motchallenge_metric_names))
     div_dict = {
         'num_objects': ['num_false_positives', 'num_misses', 'num_switches', 'num_fragmentations'],

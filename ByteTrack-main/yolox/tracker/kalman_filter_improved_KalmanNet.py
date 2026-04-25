@@ -12,6 +12,14 @@ except ImportError:
     KalmanNetNN = None
 
 
+F1_BRANCH_SCALE = np.array([0.05, 0.05, 0.02, 0.05], dtype=np.float32)
+
+
+def stable_observation_diff(curr_meas, prev_meas, image_scale_4d):
+    raw_diff = (curr_meas - prev_meas) / image_scale_4d
+    return np.tanh(raw_diff / F1_BRANCH_SCALE)
+
+
 class ImprovedKalmanFilter(object):
     def __init__(self, model_path="pretrained/kalmannet_best.pth"):
         ndim, dt = 4, 1.0
@@ -36,7 +44,7 @@ class ImprovedKalmanFilter(object):
 
         if KalmanNetNN is not None and os.path.exists(model_path):
             try:
-                self.net = KalmanNetNN(input_dim=13).to(self.device)
+                self.net = KalmanNetNN(input_dim=17).to(self.device)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     checkpoint = torch.load(model_path, map_location=self.device)
@@ -147,15 +155,22 @@ class ImprovedKalmanFilter(object):
 
         if hidden_state is None:
             gru_hidden = None
+            f1 = np.zeros(4, dtype=np.float32)
             f4 = np.zeros(8, dtype=np.float32)
         else:
-            gru_hidden, _, prev_update_term = hidden_state
+            gru_hidden, prev_measurement, prev_update_term = hidden_state
+            f1 = stable_observation_diff(
+                measurement.astype(np.float32, copy=False),
+                prev_measurement.astype(np.float32, copy=False),
+                self.image_scale_4d,
+            )
             f4 = prev_update_term.astype(np.float32, copy=False)
 
         new_gru_hidden = gru_hidden
 
         if self.use_neural_k:
             try:
+                f1_norm = torch.tensor(f1, dtype=torch.float32).view(1, 1, -1).to(self.device)
                 f2_norm = torch.tensor(
                     innovation / self.image_scale_4d, dtype=torch.float32
                 ).view(1, 1, -1).to(self.device)
@@ -166,7 +181,7 @@ class ImprovedKalmanFilter(object):
                 conf_tensor = torch.tensor(
                     [[[conf_val]]], dtype=torch.float32, device=self.device
                 )
-                net_input = torch.cat([f2_norm, f4_norm, conf_tensor], dim=-1)
+                net_input = torch.cat([f1_norm, f2_norm, f4_norm, conf_tensor], dim=-1)
 
                 with torch.no_grad():
                     delta_k_tensor, new_gru_hidden = self.net(net_input, gru_hidden)
@@ -175,7 +190,8 @@ class ImprovedKalmanFilter(object):
                 scale_matrix = self.image_scale_8d[:, None] / self.image_scale_4d[None, :]
                 delta_k = delta_k_norm * scale_matrix
                 gain_span = np.maximum(np.abs(classical_gain), 1e-3)
-                gain_residual = np.tanh(delta_k) * (self.residual_gain_limit * gain_span)
+                dynamic_limit = self.residual_gain_limit - 0.20 * np.clip(conf_val, 0.1, 1.0)
+                gain_residual = np.tanh(delta_k) * (dynamic_limit * gain_span)
                 kalman_gain = classical_gain + gain_residual
             except Exception as e:
                 logger.warning(f"[KalmanNet] Neural gain fallback to classical KF: {e}")
@@ -198,7 +214,11 @@ class ImprovedKalmanFilter(object):
         )
         new_covariance = 0.5 * (new_covariance + new_covariance.T)
 
-        new_hidden_state_packaged = (new_gru_hidden, measurement, update_term)
+        new_hidden_state_packaged = (
+            new_gru_hidden,
+            measurement.astype(np.float32, copy=False),
+            update_term.astype(np.float32, copy=False),
+        )
         return new_mean, new_covariance, new_hidden_state_packaged
 
     def gating_distance(self, mean, covariance, measurements, only_position=False, metric="maha"):

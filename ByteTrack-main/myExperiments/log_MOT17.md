@@ -37,6 +37,7 @@ B. 输入特征 (Input Features)传统 MB KF 及其变体利用底层统计特�
 | **Exp-013** | 2026-03-30 | `Exp-0013 架构2 F2、F4三维输入；claude依据gemini框架修改` |  | ** 74.1%** | **75.1%** |
 | **Exp-014** | 2026-03-30 | `Exp-0014 架构2 F2、F4三维输入；codex版本` |  | ** 80.5% %** | **81.2% ** |
 | **Exp-015** | 2026-04-14 | `Exp-0015 修改训练策略，先短轨迹训练40轮后长轨迹训练20轮 修复HOTA计算脚本 架构2 F2、F4二维输入；codex版本` |  | ** 80.4% %** | **81.3% ** |
+| **Exp-015** | 2026-04-25 | `Exp-0016 架构2 F1、F2、F4三维输入；codex版本` |  | ** 80.5% %** | **79.8% ** |
 
 
 ###################################################################################################################
@@ -591,7 +592,7 @@ Epoch [20/20], Loss: 0.000214
 
 
 ### Exp-0010修改前备份
-- **Code Version**: `Exp-0010修改前备份 架构2 F1、F2、F4三维输入；claude修改前备份，当前为gemini版本
+- **Code Version**: `Exp-0010修改前备份 架构2 F1、F2、F4三维输入；
 
 - **Command**: 	'python prepare_mot_data.py'
 				'python train_kalmannet.py'
@@ -625,7 +626,7 @@ OVERALL        31.8% 35.0% 29.2% 78.9% 94.8% 339 163 133 43 2317 11373 1073  997
 
 
 ### Exp-0011
-- **Code Version**: `Exp-0011 架构2 F1、F2、F4三维输入；claude失败后改回gemini
+- **Code Version**: `Exp-0011 架构2 F1、F2、F4三维输入；
 
 - **Command**: 	'python prepare_mot_data.py'
 				'python train_kalmannet.py'
@@ -657,7 +658,7 @@ MOT17-13-FRCNN 40.5% 47.7% 35.2% 49.3% 66.7%  44   7  22 15  776  1601 229  168 
 
 
 ### Exp-0012
-- **Code Version**: `Exp-0012 架构2 F2、F4三维输入；gemini
+- **Code Version**: `Exp-0012 架构2 F2、F4三维输入；
 
 - **Command**: 	'python prepare_mot_data.py'
 				'python train_kalmannet.py'
@@ -724,7 +725,7 @@ Epoch [60/60], Loss: 0.000317, LR: 0.000010
 
 
 ### Exp-0013
-- **Code Version**: `Exp-0013 架构2 F2、F4三维输入；claude依据gemini框架修改
+- **Code Version**: `Exp-0013 架构2 F2、F4三维输入；
 
 - **Command**: 	'python prepare_mot_data.py'
 				'python train_kalmannet.py'
@@ -791,7 +792,7 @@ Epoch [60/60]  Train: 0.000202  Val: 0.000166  LR: 0.000010
 
 
 ### Exp-0014
-- **Code Version**: `Exp-0014 架构2 F2、F4二维输入；codex版本
+- **Code Version**: `Exp-0014 架构2 F2、F4二维输入；
 					·Exp-014 和 Exp-012/013 的本质区别，不是简单“网络更深”或者“训练更久”
 					而是把 KalmanNet 的角色从“暴力替代传统 KF”改成了“在传统 KF 基础上做小幅、受约束的残差修正”
 
@@ -860,7 +861,7 @@ Training Complete. Best val_loss=0.000956, saved to pretrained/kalmannet_best.pt
 
 
 ### Exp-0014补丁
-- **Code Version**: `Exp-0014补丁 增加HOTA计算脚本 架构2 F2、F4二维输入；codex版本
+- **Code Version**: `Exp-0014补丁 增加HOTA计算脚本 架构2 F2、F4二维输入；
 
 - **Command**: 	'python prepare_mot_data.py'
 				'python train_kalmannet.py'
@@ -932,7 +933,7 @@ KalmanNet-Ours      69.05%  68.85%  69.97%  80.73%  80.97%   84.67%   95.91%    
 
 
 ### Exp-0015
-- **Code Version**: `Exp-0015 修改训练策略，先短轨迹训练40轮后长轨迹训练20轮 修复HOTA计算脚本 架构2 F2、F4二维输入；codex版本
+- **Code Version**: `Exp-0015 修改训练策略，先短轨迹训练40轮后长轨迹训练20轮 修复HOTA计算脚本 架构2 F2、F4二维输入
 
 - **Command**: 	'python prepare_mot_data.py'
 				'python train_kalmannet.py'
@@ -1028,3 +1029,81 @@ F1 branch + F2 + F4 + conf
 
 给 stage-2 单独降低学习率并加早停
 你现在已经降了 lr，这很好。下一步可以直接按 long-track val loss 或 long-track IDF1 surrogate 早停。
+
+
+
+
+####################################################################################################################
+
+
+### Exp-0016
+- **Code Version**: `Exp-0016 架构2 F1、F2、F4三维输入；codex版本
+
+- **Command**: 	'python prepare_mot_data.py'
+				'python train_kalmannet.py'
+				'python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse`
+				'python eval_custom.py
+				
+- **Output**:
+                Rcll  Prcn  GT    MT    PT    ML   FP    FN  IDs   FM  MOTA  MOTP num_objects
+MOT17-02-FRCNN 65.0% 90.5%  53 39.6% 41.5% 18.9% 6.8% 35.0% 0.5% 1.2% 57.7% 0.192        9880
+MOT17-04-FRCNN 96.1% 96.8%  69 91.3%  7.2%  1.4% 3.2%  3.9% 0.1% 0.3% 92.8% 0.125       24178
+MOT17-05-FRCNN 77.1% 96.1%  71 45.1% 39.4% 15.5% 3.2% 22.9% 0.9% 1.4% 73.0% 0.169        3357
+MOT17-09-FRCNN 82.3% 99.2%  22 72.7% 22.7%  4.5% 0.7% 17.7% 0.3% 0.9% 81.2% 0.149        2879
+MOT17-10-FRCNN 81.7% 95.1%  36 55.6% 41.7%  2.8% 4.2% 18.3% 0.7% 1.3% 76.8% 0.213        5923
+MOT17-11-FRCNN 82.0% 96.1%  44 52.3% 29.5% 18.2% 3.3% 18.0% 0.4% 0.6% 78.3% 0.132        4517
+MOT17-13-FRCNN 79.0% 95.0%  44 59.1% 22.7% 18.2% 4.2% 21.0% 0.5% 0.7% 74.3% 0.207        3156
+OVERALL        84.7% 95.6% 339 59.3% 28.9% 11.8% 3.9% 15.3% 0.4% 0.7% 80.5% 0.153       53890
+                IDF1   IDP   IDR  Rcll  Prcn  GT  MT PT ML   FP   FN IDs   FM  MOTA  MOTP IDt IDa IDm num_objects
+MOT17-02-FRCNN 60.3% 72.1% 51.8% 65.0% 90.5%  53  21 22 10  674 3461  45  122 57.7% 0.192  34  15   9        9880
+MOT17-04-FRCNN 90.8% 91.2% 90.5% 96.1% 96.8%  69  63  5  1  763  943  30   71 92.8% 0.125  14  14   3       24178
+MOT17-05-FRCNN 75.0% 84.2% 67.6% 77.1% 96.1%  71  32 28 11  106  769  31   46 73.0% 0.169  33   8  10        3357
+MOT17-09-FRCNN 75.7% 83.5% 69.3% 82.3% 99.2%  22  16  5  1   20  510  10   26 81.2% 0.149  12   3   5        2879
+MOT17-10-FRCNN 72.7% 78.7% 67.6% 81.7% 95.1%  36  20 15  1  248 1084  40   79 76.8% 0.213  27  21  10        5923
+MOT17-11-FRCNN 72.3% 78.6% 67.0% 82.0% 96.1%  44  23 13  8  150  814  17   29 78.3% 0.132  11  10   4        4517
+MOT17-13-FRCNN 78.4% 86.4% 71.8% 79.0% 95.0%  44  26 10  8  131  662  17   23 74.3% 0.207  15   4   4        3156
+OVERALL        79.8% 84.9% 75.3% 84.7% 95.6% 339 201 98 40 2092 8243 190  396 80.5% 0.153 146  75  45       53890
+
+============================================================================================================================================
+Method                HOTA    DetA    AssA    MOTA    IDF1     IDP     IDR   Recall     Prec    IDSWs       FP       FN     MT     PT     ML
+--------------------------------------------------------------------------------------------------------------------------------------------
+Exp-016             68.22%  68.66%  68.56%  80.53%  79.89%  85.15%  75.24%   84.63%   95.78%      199     2009     8282    198    102     39
+============================================================================================================================================
+
+
+(bytetrack) H:\Code\Byte\ByteTrack-main\ByteTrack-main>python train_kalmannet.py
+Training on device: cuda
+INFO Found real data file: mot_train_data.pt
+Train: 3704 samples  |  Val: 411 samples
+Start Training KalmanNet (Branch Fusion F1+F2+F4+Conf) ...
+Epoch [2/60]  Train: 0.000977  Val: 0.000964  LR: 0.000997 <- best
+Epoch [4/60]  Train: 0.000974  Val: 0.000964  LR: 0.000989
+Epoch [6/60]  Train: 0.000978  Val: 0.000964  LR: 0.000976
+Epoch [8/60]  Train: 0.000974  Val: 0.000964  LR: 0.000957
+Epoch [10/60]  Train: 0.000973  Val: 0.000964  LR: 0.000934
+Epoch [12/60]  Train: 0.000970  Val: 0.000964  LR: 0.000905 <- best
+Epoch [14/60]  Train: 0.000975  Val: 0.000964  LR: 0.000873
+Epoch [16/60]  Train: 0.000973  Val: 0.000964  LR: 0.000836 <- best
+Epoch [18/60]  Train: 0.000973  Val: 0.000964  LR: 0.000796
+Epoch [20/60]  Train: 0.000971  Val: 0.000964  LR: 0.000753 <- best
+Epoch [22/60]  Train: 0.000972  Val: 0.000964  LR: 0.000706 <- best
+Epoch [24/60]  Train: 0.000970  Val: 0.000964  LR: 0.000658
+Epoch [26/60]  Train: 0.000972  Val: 0.000964  LR: 0.000608
+Epoch [28/60]  Train: 0.000973  Val: 0.000964  LR: 0.000557
+Epoch [30/60]  Train: 0.000973  Val: 0.000964  LR: 0.000505
+Epoch [32/60]  Train: 0.000971  Val: 0.000964  LR: 0.000453 <- best
+Epoch [34/60]  Train: 0.000975  Val: 0.000964  LR: 0.000402
+Epoch [36/60]  Train: 0.000973  Val: 0.000964  LR: 0.000352
+Epoch [38/60]  Train: 0.000972  Val: 0.000964  LR: 0.000304
+Epoch [40/60]  Train: 0.000976  Val: 0.000964  LR: 0.000258
+Epoch [42/60]  Train: 0.000975  Val: 0.000964  LR: 0.000214
+Epoch [44/60]  Train: 0.000971  Val: 0.000964  LR: 0.000174
+Epoch [46/60]  Train: 0.000975  Val: 0.000964  LR: 0.000137
+Epoch [48/60]  Train: 0.000976  Val: 0.000964  LR: 0.000105
+Epoch [50/60]  Train: 0.000976  Val: 0.000964  LR: 0.000076
+Epoch [52/60]  Train: 0.000972  Val: 0.000964  LR: 0.000053
+Epoch [54/60]  Train: 0.000975  Val: 0.000964  LR: 0.000034
+Epoch [56/60]  Train: 0.000973  Val: 0.000964  LR: 0.000021
+Epoch [58/60]  Train: 0.000972  Val: 0.000964  LR: 0.000013
+Epoch [60/60]  Train: 0.000978  Val: 0.000964  LR: 0.000010
+Training Complete. Best val_loss=0.000964, saved to pretrained/kalmannet_best.pth
