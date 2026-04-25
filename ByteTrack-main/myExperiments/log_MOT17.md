@@ -37,7 +37,8 @@ B. 输入特征 (Input Features)传统 MB KF 及其变体利用底层统计特�
 | **Exp-013** | 2026-03-30 | `Exp-0013 架构2 F2、F4三维输入；claude依据gemini框架修改` |  | ** 74.1%** | **75.1%** |
 | **Exp-014** | 2026-03-30 | `Exp-0014 架构2 F2、F4三维输入；codex版本` |  | ** 80.5% %** | **81.2% ** |
 | **Exp-015** | 2026-04-14 | `Exp-0015 修改训练策略，先短轨迹训练40轮后长轨迹训练20轮 修复HOTA计算脚本 架构2 F2、F4二维输入；codex版本` |  | ** 80.4% %** | **81.3% ** |
-| **Exp-015** | 2026-04-25 | `Exp-0016 架构2 F1、F2、F4三维输入；codex版本` |  | ** 80.5% %** | **79.8% ** |
+| **Exp-016** | 2026-04-25 | `Exp-0016 架构2 F1、F2、F4三维输入；codex版本` |  | ** 80.5% %** | **79.8% ** |
+| **Exp-017** | 2026-04-25 | `Exp-0017 架构2 F1、F2、F4三维输入；修改pre_mot_data，使用 long-track 数据进行训练` |  | ** 80.3% %** | **79.3% ** |
 
 
 ###################################################################################################################
@@ -1107,3 +1108,168 @@ Epoch [56/60]  Train: 0.000973  Val: 0.000964  LR: 0.000021
 Epoch [58/60]  Train: 0.000972  Val: 0.000964  LR: 0.000013
 Epoch [60/60]  Train: 0.000978  Val: 0.000964  LR: 0.000010
 Training Complete. Best val_loss=0.000964, saved to pretrained/kalmannet_best.pth
+
+
+####################################################################################################################
+
+
+### Exp-0017
+- **Code Version**: `Exp-0017 架构2 F1、F2、F4三维输入；修改pre_mot_data，使用 long-track 数据进行训练
+
+- **Command**: 	'python prepare_mot_data.py'
+				'python train_kalmannet.py'
+				'python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse`
+				'python eval_custom.py
+				
+- **Output**:
+
+                Rcll  Prcn  GT    MT    PT    ML   FP    FN  IDs   FM  MOTA  MOTP num_objects
+MOT17-02-FRCNN 65.0% 90.2%  53 39.6% 41.5% 18.9% 7.1% 35.0% 0.5% 1.3% 57.5% 0.192        9880
+MOT17-04-FRCNN 95.9% 96.6%  69 89.9%  8.7%  1.4% 3.4%  4.1% 0.1% 0.3% 92.4% 0.128       24178
+MOT17-05-FRCNN 77.1% 96.1%  71 45.1% 39.4% 15.5% 3.2% 22.9% 0.9% 1.4% 73.0% 0.169        3357
+MOT17-09-FRCNN 82.4% 99.2%  22 72.7% 22.7%  4.5% 0.7% 17.6% 0.3% 0.9% 81.3% 0.149        2879
+MOT17-10-FRCNN 81.7% 95.1%  36 55.6% 41.7%  2.8% 4.2% 18.3% 0.7% 1.4% 76.9% 0.214        5923
+MOT17-11-FRCNN 81.9% 96.1%  44 52.3% 29.5% 18.2% 3.3% 18.1% 0.4% 0.7% 78.3% 0.132        4517
+MOT17-13-FRCNN 79.0% 95.0%  44 59.1% 22.7% 18.2% 4.2% 21.0% 0.5% 0.7% 74.3% 0.207        3156
+OVERALL        84.6% 95.5% 339 59.0% 29.2% 11.8% 4.0% 15.4% 0.4% 0.8% 80.3% 0.154       53890
+                IDF1   IDP   IDR  Rcll  Prcn  GT  MT PT ML   FP   FN IDs   FM  MOTA  MOTP IDt IDa IDm num_objects
+MOT17-02-FRCNN 59.9% 71.4% 51.5% 65.0% 90.2%  53  21 22 10  701 3454  48  129 57.5% 0.192  39  14   9        9880
+MOT17-04-FRCNN 89.9% 90.3% 89.6% 95.9% 96.6%  69  62  6  1  811  992  29   76 92.4% 0.128  16  13   3       24178
+MOT17-05-FRCNN 75.0% 84.2% 67.6% 77.1% 96.1%  71  32 28 11  106  769  31   46 73.0% 0.169  33   8  10        3357
+MOT17-09-FRCNN 75.8% 83.5% 69.4% 82.4% 99.2%  22  16  5  1   20  508  10   26 81.3% 0.149  12   3   5        2879
+MOT17-10-FRCNN 72.7% 78.7% 67.6% 81.7% 95.1%  36  20 15  1  247 1083  40   80 76.9% 0.214  27  21  10        5923
+MOT17-11-FRCNN 72.6% 78.9% 67.2% 81.9% 96.1%  44  23 13  8  149  817  16   30 78.3% 0.132   9  10   3        4517
+MOT17-13-FRCNN 78.4% 86.4% 71.8% 79.0% 95.0%  44  26 10  8  131  663  17   23 74.3% 0.207  15   4   4        3156
+OVERALL        79.3% 84.4% 74.8% 84.6% 95.5% 339 200 99 40 2165 8286 191  410 80.3% 0.154 151  73  44       53890
+
+
+
+============================================================================================================================================
+Method                HOTA    DetA    AssA    MOTA    IDF1     IDP     IDR   Recall     Prec    IDSWs       FP       FN     MT     PT     ML
+--------------------------------------------------------------------------------------------------------------------------------------------
+Exp-017             67.84%  68.62%  67.84%  80.43%  79.42%  84.63%  74.82%   84.60%   95.69%      197     2052     8298    198    102     39
+============================================================================================================================================
+
+
+
+
+(bytetrack) H:\Code\Byte\ByteTrack-main\ByteTrack-main>python train_kalmannet.py
+Training on device: cuda
+INFO Found long-track dataset: version=3 short_seq_len=20 short_seq_step=2
+Long-track split (by whole tracks): train_tracks=71 val_tracks=7 | train_windows=3722 val_windows=432
+Start Stage-1 Short BPTT ...
+Stage-1 Short BPTT Epoch [1/40]  Train: 0.000976  Val: 0.001032  LR: 0.000998 <- best
+  Train Monitor: delta_k_abs_mean=0.000291 delta_k_abs_std=0.000565 gain_ratio=0.002833 conf_loss[low:0.001015(12980), mid:0.000986(3218), high:0.000961(54520)] occlusion_loss=0.001017(14163)
+  Val Monitor:   delta_k_abs_mean=0.000097 delta_k_abs_std=0.000254 gain_ratio=0.001304 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [2/40]  Train: 0.000974  Val: 0.001031  LR: 0.000994 <- best
+  Train Monitor: delta_k_abs_mean=0.000187 delta_k_abs_std=0.000474 gain_ratio=0.002843 conf_loss[low:0.001062(13458), mid:0.000948(3191), high:0.000958(54069)] occlusion_loss=0.001060(14633)
+  Val Monitor:   delta_k_abs_mean=0.000112 delta_k_abs_std=0.000317 gain_ratio=0.001091 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [4/40]  Train: 0.000968  Val: 0.001032  LR: 0.000976
+  Train Monitor: delta_k_abs_mean=0.000399 delta_k_abs_std=0.002400 gain_ratio=0.004441 conf_loss[low:0.001030(12480), mid:0.000986(3255), high:0.000956(54983)] occlusion_loss=0.001031(13669)
+  Val Monitor:   delta_k_abs_mean=0.000170 delta_k_abs_std=0.000272 gain_ratio=0.001532 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [6/40]  Train: 0.000972  Val: 0.001032  LR: 0.000946
+  Train Monitor: delta_k_abs_mean=0.000162 delta_k_abs_std=0.000556 gain_ratio=0.002872 conf_loss[low:0.001019(12331), mid:0.000998(3265), high:0.000958(55122)] occlusion_loss=0.001020(13537)
+  Val Monitor:   delta_k_abs_mean=0.000103 delta_k_abs_std=0.000238 gain_ratio=0.001248 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [8/40]  Train: 0.000976  Val: 0.001032  LR: 0.000905
+  Train Monitor: delta_k_abs_mean=0.000102 delta_k_abs_std=0.000322 gain_ratio=0.001786 conf_loss[low:0.001079(13201), mid:0.000954(3256), high:0.000955(54261)] occlusion_loss=0.001075(14377)
+  Val Monitor:   delta_k_abs_mean=0.000265 delta_k_abs_std=0.000606 gain_ratio=0.003179 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [10/40]  Train: 0.000973  Val: 0.001032  LR: 0.000855
+  Train Monitor: delta_k_abs_mean=0.000146 delta_k_abs_std=0.000482 gain_ratio=0.002666 conf_loss[low:0.001051(13291), mid:0.000976(3262), high:0.000954(54165)] occlusion_loss=0.001051(14465)
+  Val Monitor:   delta_k_abs_mean=0.000130 delta_k_abs_std=0.000303 gain_ratio=0.001584 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [12/40]  Train: 0.000978  Val: 0.001032  LR: 0.000796
+  Train Monitor: delta_k_abs_mean=0.000098 delta_k_abs_std=0.000232 gain_ratio=0.001497 conf_loss[low:0.000998(13031), mid:0.000955(3224), high:0.000966(54463)] occlusion_loss=0.001002(14196)
+  Val Monitor:   delta_k_abs_mean=0.000103 delta_k_abs_std=0.000227 gain_ratio=0.001197 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [14/40]  Train: 0.000972  Val: 0.001032  LR: 0.000730
+  Train Monitor: delta_k_abs_mean=0.000101 delta_k_abs_std=0.000271 gain_ratio=0.001565 conf_loss[low:0.001025(13007), mid:0.000963(3243), high:0.000959(54468)] occlusion_loss=0.001026(14166)
+  Val Monitor:   delta_k_abs_mean=0.000156 delta_k_abs_std=0.000343 gain_ratio=0.001810 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [16/40]  Train: 0.000984  Val: 0.001032  LR: 0.000658
+  Train Monitor: delta_k_abs_mean=0.000116 delta_k_abs_std=0.000301 gain_ratio=0.001843 conf_loss[low:0.001113(13304), mid:0.000947(3229), high:0.000947(54185)] occlusion_loss=0.001106(14490)
+  Val Monitor:   delta_k_abs_mean=0.000141 delta_k_abs_std=0.000316 gain_ratio=0.001663 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [18/40]  Train: 0.000978  Val: 0.001032  LR: 0.000582
+  Train Monitor: delta_k_abs_mean=0.000080 delta_k_abs_std=0.000208 gain_ratio=0.001257 conf_loss[low:0.001002(13040), mid:0.000977(3179), high:0.000966(54499)] occlusion_loss=0.001002(14207)
+  Val Monitor:   delta_k_abs_mean=0.000326 delta_k_abs_std=0.000866 gain_ratio=0.004446 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [20/40]  Train: 0.000971  Val: 0.001032  LR: 0.000505
+  Train Monitor: delta_k_abs_mean=0.000105 delta_k_abs_std=0.000271 gain_ratio=0.001639 conf_loss[low:0.001027(12926), mid:0.000962(3247), high:0.000961(54545)] occlusion_loss=0.001033(14117)
+  Val Monitor:   delta_k_abs_mean=0.000139 delta_k_abs_std=0.000288 gain_ratio=0.001536 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [22/40]  Train: 0.000968  Val: 0.001032  LR: 0.000428
+  Train Monitor: delta_k_abs_mean=0.000105 delta_k_abs_std=0.000315 gain_ratio=0.001831 conf_loss[low:0.000977(13038), mid:0.000977(3204), high:0.000969(54476)] occlusion_loss=0.000986(14226)
+  Val Monitor:   delta_k_abs_mean=0.000051 delta_k_abs_std=0.000102 gain_ratio=0.000546 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [24/40]  Train: 0.000969  Val: 0.001032  LR: 0.000352
+  Train Monitor: delta_k_abs_mean=0.000090 delta_k_abs_std=0.000224 gain_ratio=0.001434 conf_loss[low:0.001011(12739), mid:0.000964(3291), high:0.000962(54688)] occlusion_loss=0.001018(13912)
+  Val Monitor:   delta_k_abs_mean=0.000090 delta_k_abs_std=0.000195 gain_ratio=0.001030 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [26/40]  Train: 0.000977  Val: 0.001032  LR: 0.000280
+  Train Monitor: delta_k_abs_mean=0.000093 delta_k_abs_std=0.000254 gain_ratio=0.001545 conf_loss[low:0.001001(13617), mid:0.000946(3175), high:0.000967(53926)] occlusion_loss=0.001007(14792)
+  Val Monitor:   delta_k_abs_mean=0.000078 delta_k_abs_std=0.000133 gain_ratio=0.000742 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [28/40]  Train: 0.000980  Val: 0.001032  LR: 0.000214
+  Train Monitor: delta_k_abs_mean=0.000067 delta_k_abs_std=0.000153 gain_ratio=0.001009 conf_loss[low:0.001034(12996), mid:0.000934(3220), high:0.000960(54502)] occlusion_loss=0.001036(14186)
+  Val Monitor:   delta_k_abs_mean=0.000154 delta_k_abs_std=0.000355 gain_ratio=0.001859 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [30/40]  Train: 0.000972  Val: 0.001032  LR: 0.000155
+  Train Monitor: delta_k_abs_mean=0.000079 delta_k_abs_std=0.000199 gain_ratio=0.001264 conf_loss[low:0.000976(12261), mid:0.000989(3246), high:0.000966(55211)] occlusion_loss=0.000985(13440)
+  Val Monitor:   delta_k_abs_mean=0.000048 delta_k_abs_std=0.000097 gain_ratio=0.000520 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [32/40]  Train: 0.000967  Val: 0.001032  LR: 0.000105
+  Train Monitor: delta_k_abs_mean=0.000072 delta_k_abs_std=0.000188 gain_ratio=0.001157 conf_loss[low:0.001001(12821), mid:0.000974(3238), high:0.000962(54659)] occlusion_loss=0.001004(13974)
+  Val Monitor:   delta_k_abs_mean=0.000059 delta_k_abs_std=0.000134 gain_ratio=0.000703 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [34/40]  Train: 0.000968  Val: 0.001032  LR: 0.000064
+  Train Monitor: delta_k_abs_mean=0.000067 delta_k_abs_std=0.000155 gain_ratio=0.001068 conf_loss[low:0.001015(12882), mid:0.000979(3249), high:0.000961(54587)] occlusion_loss=0.001017(14042)
+  Val Monitor:   delta_k_abs_mean=0.000073 delta_k_abs_std=0.000165 gain_ratio=0.000869 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [36/40]  Train: 0.000973  Val: 0.001032  LR: 0.000034
+  Train Monitor: delta_k_abs_mean=0.000086 delta_k_abs_std=0.000218 gain_ratio=0.001452 conf_loss[low:0.001034(12781), mid:0.000955(3273), high:0.000960(54664)] occlusion_loss=0.001035(13996)
+  Val Monitor:   delta_k_abs_mean=0.000060 delta_k_abs_std=0.000135 gain_ratio=0.000711 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [38/40]  Train: 0.000971  Val: 0.001032  LR: 0.000016
+  Train Monitor: delta_k_abs_mean=0.000070 delta_k_abs_std=0.000165 gain_ratio=0.001157 conf_loss[low:0.001011(13511), mid:0.000957(3222), high:0.000964(53985)] occlusion_loss=0.001017(14696)
+  Val Monitor:   delta_k_abs_mean=0.000068 delta_k_abs_std=0.000171 gain_ratio=0.000883 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-1 Short BPTT Epoch [40/40]  Train: 0.000974  Val: 0.001032  LR: 0.000010
+  Train Monitor: delta_k_abs_mean=0.000077 delta_k_abs_std=0.000188 gain_ratio=0.001288 conf_loss[low:0.000989(13018), mid:0.000966(3234), high:0.000970(54466)] occlusion_loss=0.000997(14194)
+  Val Monitor:   delta_k_abs_mean=0.000071 delta_k_abs_std=0.000175 gain_ratio=0.000910 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Start Stage-2 Long-window Fine-tune ...
+Stage-2 Long-window Fine-tune Epoch [1/20]  Train: 0.000962  Val: 0.001032  LR: 0.000199
+  Train Monitor: delta_k_abs_mean=0.000082 delta_k_abs_std=0.000188 gain_ratio=0.000930 conf_loss[low:0.000952(2762), mid:0.000983(3798), high:0.000963(64158)] occlusion_loss=0.000990(4149)
+  Val Monitor:   delta_k_abs_mean=0.000092 delta_k_abs_std=0.000225 gain_ratio=0.001168 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-2 Long-window Fine-tune Epoch [2/20]  Train: 0.000965  Val: 0.001032  LR: 0.000195
+  Train Monitor: delta_k_abs_mean=0.000084 delta_k_abs_std=0.000207 gain_ratio=0.001047 conf_loss[low:0.000974(2762), mid:0.000980(3798), high:0.000962(64158)] occlusion_loss=0.000999(4149)
+  Val Monitor:   delta_k_abs_mean=0.000040 delta_k_abs_std=0.000095 gain_ratio=0.000497 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-2 Long-window Fine-tune Epoch [4/20]  Train: 0.000959  Val: 0.001032  LR: 0.000182
+  Train Monitor: delta_k_abs_mean=0.000078 delta_k_abs_std=0.000198 gain_ratio=0.000994 conf_loss[low:0.000972(2762), mid:0.000978(3798), high:0.000962(64158)] occlusion_loss=0.001004(4149)
+  Val Monitor:   delta_k_abs_mean=0.000094 delta_k_abs_std=0.000193 gain_ratio=0.001033 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-2 Long-window Fine-tune Epoch [6/20]  Train: 0.000965  Val: 0.001032  LR: 0.000161
+  Train Monitor: delta_k_abs_mean=0.000084 delta_k_abs_std=0.000217 gain_ratio=0.001067 conf_loss[low:0.000975(2762), mid:0.000953(3798), high:0.000963(64158)] occlusion_loss=0.000998(4149)
+  Val Monitor:   delta_k_abs_mean=0.000082 delta_k_abs_std=0.000217 gain_ratio=0.001116 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-2 Long-window Fine-tune Epoch [8/20]  Train: 0.000963  Val: 0.001032  LR: 0.000134
+  Train Monitor: delta_k_abs_mean=0.000074 delta_k_abs_std=0.000189 gain_ratio=0.000934 conf_loss[low:0.000970(2762), mid:0.000952(3798), high:0.000964(64158)] occlusion_loss=0.001018(4149)
+  Val Monitor:   delta_k_abs_mean=0.000059 delta_k_abs_std=0.000108 gain_ratio=0.000591 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-2 Long-window Fine-tune Epoch [10/20]  Train: 0.000961  Val: 0.001032  LR: 0.000105
+  Train Monitor: delta_k_abs_mean=0.000068 delta_k_abs_std=0.000157 gain_ratio=0.000800 conf_loss[low:0.000965(2762), mid:0.000971(3798), high:0.000963(64158)] occlusion_loss=0.000997(4149)
+  Val Monitor:   delta_k_abs_mean=0.000090 delta_k_abs_std=0.000239 gain_ratio=0.001227 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-2 Long-window Fine-tune Epoch [12/20]  Train: 0.000966  Val: 0.001032  LR: 0.000076
+  Train Monitor: delta_k_abs_mean=0.000071 delta_k_abs_std=0.000161 gain_ratio=0.000842 conf_loss[low:0.000966(2762), mid:0.000964(3798), high:0.000963(64158)] occlusion_loss=0.001002(4149)
+  Val Monitor:   delta_k_abs_mean=0.000064 delta_k_abs_std=0.000166 gain_ratio=0.000855 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-2 Long-window Fine-tune Epoch [14/20]  Train: 0.000959  Val: 0.001032  LR: 0.000049
+  Train Monitor: delta_k_abs_mean=0.000070 delta_k_abs_std=0.000168 gain_ratio=0.000883 conf_loss[low:0.000976(2762), mid:0.000969(3798), high:0.000962(64158)] occlusion_loss=0.000993(4149)
+  Val Monitor:   delta_k_abs_mean=0.000077 delta_k_abs_std=0.000156 gain_ratio=0.000838 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-2 Long-window Fine-tune Epoch [16/20]  Train: 0.000967  Val: 0.001032  LR: 0.000028
+  Train Monitor: delta_k_abs_mean=0.000055 delta_k_abs_std=0.000118 gain_ratio=0.000630 conf_loss[low:0.000965(2762), mid:0.000965(3798), high:0.000963(64158)] occlusion_loss=0.001001(4149)
+  Val Monitor:   delta_k_abs_mean=0.000084 delta_k_abs_std=0.000170 gain_ratio=0.000909 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-2 Long-window Fine-tune Epoch [18/20]  Train: 0.000964  Val: 0.001032  LR: 0.000015
+  Train Monitor: delta_k_abs_mean=0.000071 delta_k_abs_std=0.000164 gain_ratio=0.000869 conf_loss[low:0.000977(2762), mid:0.000971(3798), high:0.000962(64158)] occlusion_loss=0.001000(4149)
+  Val Monitor:   delta_k_abs_mean=0.000059 delta_k_abs_std=0.000143 gain_ratio=0.000745 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Stage-2 Long-window Fine-tune Epoch [20/20]  Train: 0.000964  Val: 0.001032  LR: 0.000010
+  Train Monitor: delta_k_abs_mean=0.000066 delta_k_abs_std=0.000155 gain_ratio=0.000822 conf_loss[low:0.000940(2762), mid:0.000982(3798), high:0.000963(64158)] occlusion_loss=0.000975(4149)
+  Val Monitor:   delta_k_abs_mean=0.000071 delta_k_abs_std=0.000161 gain_ratio=0.000845 conf_loss[low:0.000964(161), mid:0.000855(409), high:0.001053(7638)] occlusion_loss=0.001702(280)
+Training complete. Best val_loss=0.001031, saved to pretrained/kalmannet_best.pth
+
+(bytetrack) H:\Code\Byte\ByteTrack-main\ByteTrack-main>python tools/track.py -f exps/example/mot/yolox_s_mot17_half.py -c pretrained/bytetrack_s_mot17.pth.tar -b 1 -d 1 --fp16 --fuse
+2026-04-25 13:09:55.848 | INFO     | yolox.tracker.kalman_filter_improved_KalmanNet:__init__:54 - [KalmanNet] ACTIVATED! Loaded from: pretrained/kalmannet_best.pth
+2026-04-25 13:09:56 | INFO     | __main__:160 - Args: Namespace(experiment_name='yolox_s_mot17_half', name=None, dist_backend='nccl', dist_url=None, batch_size=1, devices=1, local_rank=0, num_machines=1, machine_rank=0, exp_file='exps/example/mot/yolox_s_mot17_half.py', fp16=True, fuse=True, trt=False, test=False, speed=False, opts=[], ckpt='pretrained/bytetrack_s_mot17.pth.tar', conf=0.01, nms=0.7, tsize=None, seed=None, track_thresh=0.6, track_buffer=30, match_thresh=0.9, min_box_area=100, mot20=False)
+F:\Software\Anaconda\envs\bytetrack\lib\site-packages\torch\functional.py:534: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\builder\windows\pytorch\aten\src\ATen\native\TensorShape.cpp:3596.)
+  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
+2026-04-25 13:09:56 | INFO     | __main__:170 - Model Summary: Params: 8.94M, Gflops: 75.25
+2026-04-25 13:09:56 | INFO     | yolox.data.datasets.mot:39 - loading annotations into memory...
+2026-04-25 13:09:57 | INFO     | yolox.data.datasets.mot:39 - Done (t=0.24s)
+2026-04-25 13:09:57 | INFO     | pycocotools.coco:86 - creating index...
+2026-04-25 13:09:57 | INFO     | pycocotools.coco:86 - index created!
+H:\Code\Byte\ByteTrack-main\ByteTrack-main\tools\track.py:194: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  ckpt = torch.load(ckpt_file, map_location=loc)
+2026-04-25 13:09:57 | INFO     | __main__:192 - loading checkpoint
+2026-04-25 13:09:57 | INFO     | __main__:197 - loaded checkpoint done.
+2026-04-25 13:09:57 | INFO     | __main__:203 -         Fusing model...
+F:\Software\Anaconda\envs\bytetrack\lib\site-packages\torch\nn\modules\module.py:935: UserWarning: The .grad attribute of a Tensor that is not a leaf Tensor is being accessed. Its .grad attribute won't be populated during autograd.backward(). If you indeed want the .grad field to be populated for a non-leaf Tensor, use .retain_grad() on the non-leaf Tensor. If you access the non-leaf Tensor by mistake, make sure you access the leaf Tensor instead. See github.com/pytorch/pytorch/pull/30531 for more informations. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\builder\windows\pytorch\build\aten\src\ATen/core/TensorBody.h:494.)

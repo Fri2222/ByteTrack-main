@@ -56,6 +56,7 @@ def build_track_collections(data_root, det_root):
 
     long_tracks_input = []
     long_tracks_gt = []
+    long_tracks_frame_ids = []
     long_track_meta = []
     short_sample_count = 0
 
@@ -103,31 +104,49 @@ def build_track_collections(data_root, det_root):
                 det_val = det_box + [float(dets[r, 6])]
                 gt_val = gt_box
 
-                matched_tracks.setdefault(gt_id, {"det": [], "gt": []})
+                matched_tracks.setdefault(gt_id, {"det": [], "gt": [], "frame_ids": []})
                 matched_tracks[gt_id]["det"].append(det_val)
                 matched_tracks[gt_id]["gt"].append(gt_val)
+                matched_tracks[gt_id]["frame_ids"].append(fid)
 
         for gt_id, track_dict in matched_tracks.items():
             det_seq = np.asarray(track_dict["det"], dtype=np.float32)
             gt_seq = np.asarray(track_dict["gt"], dtype=np.float32)
+            frame_ids = np.asarray(track_dict["frame_ids"], dtype=np.int64)
             if len(det_seq) < SHORT_SEQ_LEN:
                 continue
 
             long_tracks_input.append(torch.tensor(det_seq, dtype=torch.float32))
             long_tracks_gt.append(torch.tensor(gt_seq, dtype=torch.float32))
-            long_track_meta.append({"seq": seq, "gt_id": gt_id, "length": int(len(det_seq))})
-            short_sample_count += max(0, (len(det_seq) - SHORT_SEQ_LEN + SHORT_SEQ_STEP - 1) // SHORT_SEQ_STEP)
+            long_tracks_frame_ids.append(torch.tensor(frame_ids, dtype=torch.long))
+
+            frame_gaps = np.diff(frame_ids)
+            num_gaps = int(np.sum(frame_gaps > 1))
+            long_track_meta.append(
+                {
+                    "seq": seq,
+                    "gt_id": gt_id,
+                    "length": int(len(det_seq)),
+                    "num_gaps": num_gaps,
+                    "max_gap": int(frame_gaps.max()) if len(frame_gaps) > 0 else 1,
+                }
+            )
+            short_sample_count += max(
+                0, (len(det_seq) - SHORT_SEQ_LEN + SHORT_SEQ_STEP - 1) // SHORT_SEQ_STEP
+            )
 
     if not long_tracks_input:
         print("Error: no valid long tracks generated. Check paths and detection results.")
         return None
 
     payload = {
-        "version": 2,
+        "version": 3,
+        "dataset_type": "long_track",
         "short_seq_len": SHORT_SEQ_LEN,
         "short_seq_step": SHORT_SEQ_STEP,
         "long_tracks_input": long_tracks_input,
         "long_tracks_gt": long_tracks_gt,
+        "long_tracks_frame_ids": long_tracks_frame_ids,
         "long_track_meta": long_track_meta,
     }
     return payload, short_sample_count
@@ -142,12 +161,18 @@ def prepare_real_data(data_root, det_root, output_path="mot_train_data.pt"):
     torch.save(payload, output_path)
 
     track_lengths = [meta["length"] for meta in payload["long_track_meta"]]
+    track_gaps = [meta["num_gaps"] for meta in payload["long_track_meta"]]
     print(f"Saved long-track dataset to {output_path}")
+    print(f"Dataset version: {payload['version']} ({payload['dataset_type']})")
     print(f"Total long tracks: {len(payload['long_tracks_input'])}")
     print(f"Approx short windows ({payload['short_seq_len']} frames): {short_sample_count}")
     print(
         "Track length stats: "
         f"min={min(track_lengths)}, max={max(track_lengths)}, mean={sum(track_lengths) / len(track_lengths):.1f}"
+    )
+    print(
+        "Temporal gap stats: "
+        f"tracks_with_gaps={sum(g > 0 for g in track_gaps)}, max_gaps_per_track={max(track_gaps)}"
     )
 
 
