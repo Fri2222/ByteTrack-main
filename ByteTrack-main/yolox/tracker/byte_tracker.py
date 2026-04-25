@@ -184,7 +184,9 @@ class BYTETracker(object):
         self.det_thresh = args.track_thresh + 0.1
         self.buffer_size = int(frame_rate / 30.0 * args.track_buffer)
         self.max_time_lost = self.buffer_size
-        self.kalman_filter = KalmanFilter()
+        kalmannet_ckpt = getattr(args, "kalmannet_ckpt", "pretrained/kalmannet_best.pth")
+        self.kalman_filter = KalmanFilter(model_path=kalmannet_ckpt)
+        STrack.shared_kalman = self.kalman_filter
 
     def update(self, output_results, img_info, img_size):
         self.frame_id += 1

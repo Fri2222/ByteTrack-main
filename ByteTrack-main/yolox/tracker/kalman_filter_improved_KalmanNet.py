@@ -7,9 +7,10 @@ import torch
 from loguru import logger
 
 try:
-    from .kalmannet_model import KalmanNetNN
+    from .kalmannet_model import KalmanNetNN, infer_feature_mode_from_state_dict
 except ImportError:
     KalmanNetNN = None
+    infer_feature_mode_from_state_dict = None
 
 
 F1_BRANCH_SCALE = np.array([0.05, 0.05, 0.02, 0.05], dtype=np.float32)
@@ -18,6 +19,16 @@ F1_BRANCH_SCALE = np.array([0.05, 0.05, 0.02, 0.05], dtype=np.float32)
 def stable_observation_diff(curr_meas, prev_meas, image_scale_4d):
     raw_diff = (curr_meas - prev_meas) / image_scale_4d
     return np.tanh(raw_diff / F1_BRANCH_SCALE)
+
+
+def build_feature_input(feature_mode, f1_norm, f2_norm, f4_norm, conf_tensor):
+    if feature_mode == "f2_conf":
+        return torch.cat([f2_norm, conf_tensor], dim=-1)
+    if feature_mode == "f2_f4_conf":
+        return torch.cat([f2_norm, f4_norm, conf_tensor], dim=-1)
+    if feature_mode == "f1_f2_f4_conf":
+        return torch.cat([f1_norm, f2_norm, f4_norm, conf_tensor], dim=-1)
+    raise ValueError(f"Unsupported feature_mode: {feature_mode}")
 
 
 class ImprovedKalmanFilter(object):
@@ -34,6 +45,7 @@ class ImprovedKalmanFilter(object):
 
         self.use_neural_k = False
         self.net = None
+        self.feature_mode = "f1_f2_f4_conf"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.image_scale_4d = np.array([1920.0, 1080.0, 1.0, 1080.0], dtype=np.float32)
         self.image_scale_8d = np.array(
@@ -44,14 +56,24 @@ class ImprovedKalmanFilter(object):
 
         if KalmanNetNN is not None and os.path.exists(model_path):
             try:
-                self.net = KalmanNetNN(input_dim=17).to(self.device)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     checkpoint = torch.load(model_path, map_location=self.device)
-                self.net.load_state_dict(checkpoint)
+
+                if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+                    state_dict = checkpoint["state_dict"]
+                    self.feature_mode = checkpoint.get("feature_mode", "f1_f2_f4_conf")
+                else:
+                    state_dict = checkpoint
+                    self.feature_mode = infer_feature_mode_from_state_dict(state_dict)
+
+                self.net = KalmanNetNN(feature_mode=self.feature_mode).to(self.device)
+                self.net.load_state_dict(state_dict)
                 self.net.eval()
                 self.use_neural_k = True
-                logger.info(f"[KalmanNet] ACTIVATED! Loaded from: {model_path}")
+                logger.info(
+                    f"[KalmanNet] ACTIVATED! feature_mode={self.feature_mode} loaded from: {model_path}"
+                )
             except Exception as e:
                 logger.error(f"[KalmanNet] Load Failed: {e}")
                 self.use_neural_k = False
@@ -181,7 +203,9 @@ class ImprovedKalmanFilter(object):
                 conf_tensor = torch.tensor(
                     [[[conf_val]]], dtype=torch.float32, device=self.device
                 )
-                net_input = torch.cat([f1_norm, f2_norm, f4_norm, conf_tensor], dim=-1)
+                net_input = build_feature_input(
+                    self.feature_mode, f1_norm, f2_norm, f4_norm, conf_tensor
+                )
 
                 with torch.no_grad():
                     delta_k_tensor, new_gru_hidden = self.net(net_input, gru_hidden)

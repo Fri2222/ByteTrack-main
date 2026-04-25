@@ -1,3 +1,4 @@
+import argparse
 import os
 import warnings
 
@@ -7,7 +8,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 
 try:
-    from yolox.tracker.kalmannet_model import KalmanNetNN
+    from yolox.tracker.kalmannet_model import KalmanNetNN, FEATURE_SPECS
 except ImportError:
     print("Error: Could not import KalmanNetNN.")
     raise SystemExit(1)
@@ -18,6 +19,25 @@ CONF_BUCKETS = (
     ("mid", 0.4, 0.7),
     ("high", 0.7, 1.01),
 )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train KalmanNet with configurable feature modes.")
+    parser.add_argument(
+        "--feature-mode",
+        default="f1_f2_f4_conf",
+        choices=sorted(FEATURE_SPECS.keys()),
+        help="Controlled feature ablation mode.",
+    )
+    parser.add_argument("--short-epochs", type=int, default=40)
+    parser.add_argument("--long-epochs", type=int, default=20)
+    parser.add_argument("--short-lr", type=float, default=1e-3)
+    parser.add_argument("--long-lr", type=float, default=2e-4)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--val-split", type=float, default=0.1)
+    parser.add_argument("--save-path", default="pretrained/kalmannet_best.pth")
+    parser.add_argument("--data-file", default="mot_train_data.pt")
+    return parser.parse_args()
 
 
 def build_init_cov(measurement):
@@ -82,6 +102,16 @@ def stable_observation_diff(curr_meas, prev_meas):
     raw_diff = curr_meas - prev_meas
     scale = torch.tensor([0.05, 0.05, 0.02, 0.05], device=curr_meas.device).view(1, -1)
     return torch.tanh(raw_diff / scale)
+
+
+def build_feature_input(feature_mode, f1, innovation, prev_update, conf):
+    if feature_mode == "f2_conf":
+        return torch.cat([innovation, conf], dim=1)
+    if feature_mode == "f2_f4_conf":
+        return torch.cat([innovation, prev_update, conf], dim=1)
+    if feature_mode == "f1_f2_f4_conf":
+        return torch.cat([f1, innovation, prev_update, conf], dim=1)
+    raise ValueError(f"Unsupported feature_mode: {feature_mode}")
 
 
 class FixedWindowTrackDataset(Dataset):
@@ -209,6 +239,7 @@ def run_sequence_batch(
     batch_obs,
     batch_gt,
     batch_frame_ids,
+    feature_mode,
     device,
     f_mat,
     h_mat,
@@ -261,7 +292,8 @@ def run_sequence_batch(
         s_mat = s_mat + meas_cov
         k_classic = classical_gain(cov_pred, h_mat, s_mat)
 
-        net_input = torch.cat([f1, innovation, prev_update, conf], dim=1).unsqueeze(1)
+        feature_input = build_feature_input(feature_mode, f1, innovation, prev_update, conf)
+        net_input = feature_input.unsqueeze(1)
         delta_k, hidden = model(net_input, hidden)
         gain_span = torch.clamp(k_classic.abs(), min=1e-3)
 
@@ -315,28 +347,32 @@ def load_long_track_payload(data_file_path):
     return payload
 
 
+def save_checkpoint(save_path, model, feature_mode, extra_meta=None):
+    checkpoint = {
+        "state_dict": model.state_dict(),
+        "feature_mode": feature_mode,
+    }
+    if extra_meta is not None:
+        checkpoint.update(extra_meta)
+    torch.save(checkpoint, save_path)
+
+
 def train():
+    args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on device: {device}")
 
-    short_batch_size = 32
-    short_epochs = 40
-    long_epochs = 20
-    short_lr = 1e-3
-    long_lr = 2e-4
-    val_split = 0.1
     residual_gain_limit = 0.30
-    data_file_path = "mot_train_data.pt"
 
-    if not os.path.exists(data_file_path):
+    if not os.path.exists(args.data_file):
         print("Error: training data not found. Please run prepare_mot_data.py first.")
         return
 
-    payload = load_long_track_payload(data_file_path)
+    payload = load_long_track_payload(args.data_file)
     print(
         "INFO Found long-track dataset: "
         f"version={payload['version']} short_seq_len={payload['short_seq_len']} "
-        f"short_seq_step={payload['short_seq_step']}"
+        f"short_seq_step={payload['short_seq_step']} feature_mode={args.feature_mode}"
     )
 
     scale = torch.tensor([1920, 1080, 1, 1080], dtype=torch.float32)
@@ -354,7 +390,7 @@ def train():
         val_tracks_obs,
         val_tracks_gt,
         val_tracks_frame_ids,
-    ) = split_tracks(tracks_obs, tracks_gt, tracks_frame_ids, val_split=val_split, seed=42)
+    ) = split_tracks(tracks_obs, tracks_gt, tracks_frame_ids, val_split=args.val_split, seed=42)
 
     short_train_dataset = FixedWindowTrackDataset(
         train_tracks_obs, train_tracks_gt, train_tracks_frame_ids, seq_len=short_seq_len, step=short_seq_step
@@ -368,10 +404,10 @@ def train():
         f"train_windows={len(short_train_dataset)} val_windows={len(short_val_dataset)}"
     )
 
-    short_train_loader = DataLoader(short_train_dataset, batch_size=short_batch_size, shuffle=True)
-    short_val_loader = DataLoader(short_val_dataset, batch_size=short_batch_size, shuffle=False)
+    train_loader = DataLoader(short_train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(short_val_dataset, batch_size=args.batch_size, shuffle=False)
 
-    model = KalmanNetNN(input_dim=17).to(device)
+    model = KalmanNetNN(feature_mode=args.feature_mode).to(device)
     criterion = nn.MSELoss()
 
     f_mat = torch.eye(8, device=device)
@@ -379,13 +415,12 @@ def train():
         f_mat[i, 4 + i] = 1.0
     h_mat = torch.eye(4, 8, device=device)
 
-    save_path = "pretrained/kalmannet_best.pth"
-    os.makedirs("pretrained", exist_ok=True)
+    os.makedirs(os.path.dirname(args.save_path) or ".", exist_ok=True)
     best_val_loss = float("inf")
 
     stages = [
-        ("Stage-1 Short BPTT", short_train_loader, short_val_loader, short_epochs, short_lr, True),
-        ("Stage-2 Long-window Fine-tune", short_train_loader, short_val_loader, long_epochs, long_lr, False),
+        ("Stage-1 Short BPTT", train_loader, val_loader, args.short_epochs, args.short_lr, True),
+        ("Stage-2 Long-window Fine-tune", train_loader, val_loader, args.long_epochs, args.long_lr, False),
     ]
 
     for stage_name, train_loader, val_loader, epochs, lr, add_noise in stages:
@@ -407,6 +442,7 @@ def train():
                     b_obs,
                     b_gt,
                     b_frame_ids,
+                    args.feature_mode,
                     device,
                     f_mat,
                     h_mat,
@@ -433,6 +469,7 @@ def train():
                         b_obs,
                         b_gt,
                         b_frame_ids,
+                        args.feature_mode,
                         device,
                         f_mat,
                         h_mat,
@@ -447,7 +484,12 @@ def train():
             is_best = avg_val_loss < best_val_loss
             if is_best:
                 best_val_loss = avg_val_loss
-                torch.save(model.state_dict(), save_path)
+                save_checkpoint(
+                    args.save_path,
+                    model,
+                    args.feature_mode,
+                    extra_meta={"best_val_loss": best_val_loss},
+                )
 
             current_lr = scheduler.get_last_lr()[0]
             best_flag = " <- best" if is_best else ""
@@ -460,7 +502,10 @@ def train():
                 print(format_epoch_stats("  Train Monitor:", train_stats))
                 print(format_epoch_stats("  Val Monitor:  ", val_stats))
 
-    print(f"Training complete. Best val_loss={best_val_loss:.6f}, saved to {save_path}")
+    print(
+        f"Training complete. feature_mode={args.feature_mode} "
+        f"best_val_loss={best_val_loss:.6f}, saved to {args.save_path}"
+    )
 
 
 if __name__ == "__main__":

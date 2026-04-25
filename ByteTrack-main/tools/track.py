@@ -107,6 +107,12 @@ def make_parser():
     parser.add_argument("--track_buffer", type=int, default=30, help="the frames for keep lost tracks")
     parser.add_argument("--match_thresh", type=float, default=0.9, help="matching threshold for tracking")
     parser.add_argument("--min-box-area", type=float, default=100, help='filter out tiny boxes')
+    parser.add_argument(
+        "--kalmannet-ckpt",
+        default="pretrained/kalmannet_best.pth",
+        type=str,
+        help="KalmanNet checkpoint for tracker ablations.",
+    )
     parser.add_argument("--mot20", dest="mot20", default=False, action="store_true", help="test mot20.")
     return parser
 
