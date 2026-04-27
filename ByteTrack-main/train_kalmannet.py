@@ -3,9 +3,8 @@ import os
 import warnings
 
 import torch
-import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 try:
     from yolox.tracker.kalmannet_model import KalmanNetNN, FEATURE_SPECS
@@ -25,7 +24,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train KalmanNet with configurable feature modes.")
     parser.add_argument(
         "--feature-mode",
-        default="f1_f2_f4_conf",
+        default="f2_f4_conf",
         choices=sorted(FEATURE_SPECS.keys()),
         help="Controlled feature ablation mode.",
     )
@@ -37,6 +36,13 @@ def parse_args():
     parser.add_argument("--val-split", type=float, default=0.1)
     parser.add_argument("--save-path", default="pretrained/kalmannet_best.pth")
     parser.add_argument("--data-file", default="mot_train_data.pt")
+    parser.add_argument("--residual-gain-limit", type=float, default=0.45)
+    parser.add_argument("--delta-k-reg-weight", type=float, default=0.01)
+    parser.add_argument("--hard-gap-weight", type=float, default=2.5)
+    parser.add_argument("--hard-lowconf-weight", type=float, default=2.0)
+    parser.add_argument("--lowconf-thresh", type=float, default=0.3)
+    parser.add_argument("--lowconf-resample-boost", type=float, default=2.0)
+    parser.add_argument("--gap-resample-boost", type=float, default=2.5)
     return parser.parse_args()
 
 
@@ -115,8 +121,19 @@ def build_feature_input(feature_mode, f1, innovation, prev_update, conf):
 
 
 class FixedWindowTrackDataset(Dataset):
-    def __init__(self, tracks_obs, tracks_gt, tracks_frame_ids, seq_len=20, step=2):
+    def __init__(
+        self,
+        tracks_obs,
+        tracks_gt,
+        tracks_frame_ids,
+        seq_len=20,
+        step=2,
+        lowconf_thresh=0.3,
+        lowconf_resample_boost=2.0,
+        gap_resample_boost=2.5,
+    ):
         self.samples = []
+        self.sample_weights = []
         for obs, gt, frame_ids in zip(tracks_obs, tracks_gt, tracks_frame_ids):
             track_len = obs.shape[0]
             if track_len < seq_len:
@@ -124,7 +141,20 @@ class FixedWindowTrackDataset(Dataset):
             last_start = track_len - seq_len
             for start in range(0, last_start + 1, step):
                 end = start + seq_len
-                self.samples.append((obs[start:end], gt[start:end], frame_ids[start:end]))
+                obs_window = obs[start:end]
+                gt_window = gt[start:end]
+                frame_window = frame_ids[start:end]
+                self.samples.append((obs_window, gt_window, frame_window))
+
+                frame_gap = frame_window[1:] - frame_window[:-1]
+                has_gap = bool(torch.any(frame_gap > 1))
+                lowconf_count = int(torch.sum(obs_window[:, 4] < lowconf_thresh).item())
+                weight = 1.0
+                if has_gap:
+                    weight += gap_resample_boost
+                if lowconf_count > 0:
+                    weight += lowconf_resample_boost * (lowconf_count / max(1, seq_len))
+                self.sample_weights.append(weight)
 
     def __len__(self):
         return len(self.samples)
@@ -234,6 +264,13 @@ def format_epoch_stats(prefix, stats):
     )
 
 
+def compute_step_weights(frame_gap, conf, lowconf_thresh, hard_gap_weight, hard_lowconf_weight):
+    weights = torch.ones_like(conf.view(-1))
+    weights = weights + (frame_gap > 1).float() * (hard_gap_weight - 1.0)
+    weights = weights + (conf.view(-1) < lowconf_thresh).float() * (hard_lowconf_weight - 1.0)
+    return weights
+
+
 def run_sequence_batch(
     model,
     batch_obs,
@@ -244,7 +281,10 @@ def run_sequence_batch(
     f_mat,
     h_mat,
     residual_gain_limit,
-    criterion,
+    delta_k_reg_weight,
+    lowconf_thresh,
+    hard_gap_weight,
+    hard_lowconf_weight,
     epoch_stats,
     add_noise=False,
 ):
@@ -298,7 +338,8 @@ def run_sequence_batch(
         gain_span = torch.clamp(k_classic.abs(), min=1e-3)
 
         conf_val_clamped = conf.clamp(0.1, 1.0).view(-1, 1, 1)
-        dynamic_limit = residual_gain_limit - 0.20 * conf_val_clamped
+        dynamic_limit = residual_gain_limit - 0.15 * conf_val_clamped
+        dynamic_limit = dynamic_limit + (conf_val_clamped < lowconf_thresh).float() * 0.10
         k_gain = k_classic + torch.tanh(delta_k) * (dynamic_limit * gain_span)
 
         update_term = torch.bmm(k_gain, innovation.unsqueeze(2)).squeeze(2)
@@ -316,15 +357,20 @@ def run_sequence_batch(
         )
         covariance = 0.5 * (covariance + covariance.transpose(1, 2))
 
-        loss_pos = criterion(current_state[:, :4], b_gt[:, t, :])
+        frame_gap = b_frame_ids[:, t] - b_frame_ids[:, t - 1]
+        occ_mask = (frame_gap > 1) | (conf.view(-1) < lowconf_thresh)
+        step_weights = compute_step_weights(
+            frame_gap, conf, lowconf_thresh, hard_gap_weight, hard_lowconf_weight
+        )
+
+        loss_pos = torch.mean((current_state[:, :4] - b_gt[:, t, :]).pow(2), dim=1)
         gt_vel = b_gt[:, t, :] - b_gt[:, t - 1, :]
-        loss_vel = criterion(current_state[:, 4:8], gt_vel)
-        loss_reg = torch.mean(delta_k.pow(2))
-        step_loss = loss_pos + 2.0 * loss_vel + 0.05 * loss_reg
+        loss_vel = torch.mean((current_state[:, 4:8] - gt_vel).pow(2), dim=1)
+        loss_reg = torch.mean(delta_k.pow(2), dim=(1, 2))
+        step_loss_per_sample = loss_pos + 2.0 * loss_vel + delta_k_reg_weight * loss_reg
+        step_loss = torch.mean(step_loss_per_sample * step_weights)
         total_loss = total_loss + step_loss
 
-        frame_gap = b_frame_ids[:, t] - b_frame_ids[:, t - 1]
-        occ_mask = (frame_gap > 1) | (conf.view(-1) < 0.3)
         update_epoch_stats(epoch_stats, delta_k, k_classic, step_loss.item(), conf, occ_mask)
 
     return total_loss / (seq_len - 1)
@@ -362,7 +408,7 @@ def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on device: {device}")
 
-    residual_gain_limit = 0.30
+    residual_gain_limit = args.residual_gain_limit
 
     if not os.path.exists(args.data_file):
         print("Error: training data not found. Please run prepare_mot_data.py first.")
@@ -393,10 +439,24 @@ def train():
     ) = split_tracks(tracks_obs, tracks_gt, tracks_frame_ids, val_split=args.val_split, seed=42)
 
     short_train_dataset = FixedWindowTrackDataset(
-        train_tracks_obs, train_tracks_gt, train_tracks_frame_ids, seq_len=short_seq_len, step=short_seq_step
+        train_tracks_obs,
+        train_tracks_gt,
+        train_tracks_frame_ids,
+        seq_len=short_seq_len,
+        step=short_seq_step,
+        lowconf_thresh=args.lowconf_thresh,
+        lowconf_resample_boost=args.lowconf_resample_boost,
+        gap_resample_boost=args.gap_resample_boost,
     )
     short_val_dataset = FixedWindowTrackDataset(
-        val_tracks_obs, val_tracks_gt, val_tracks_frame_ids, seq_len=short_seq_len, step=short_seq_step
+        val_tracks_obs,
+        val_tracks_gt,
+        val_tracks_frame_ids,
+        seq_len=short_seq_len,
+        step=short_seq_step,
+        lowconf_thresh=args.lowconf_thresh,
+        lowconf_resample_boost=args.lowconf_resample_boost,
+        gap_resample_boost=args.gap_resample_boost,
     )
     print(
         "Long-track split (by whole tracks): "
@@ -404,11 +464,24 @@ def train():
         f"train_windows={len(short_train_dataset)} val_windows={len(short_val_dataset)}"
     )
 
-    train_loader = DataLoader(short_train_dataset, batch_size=args.batch_size, shuffle=True)
+    sample_weights = torch.DoubleTensor(short_train_dataset.sample_weights)
+    train_sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True,
+    )
+    print(
+        "Train window resampling: "
+        f"weight_mean={sample_weights.mean().item():.3f} "
+        f"weight_max={sample_weights.max().item():.3f}"
+    )
+
+    train_loader = DataLoader(
+        short_train_dataset, batch_size=args.batch_size, sampler=train_sampler
+    )
     val_loader = DataLoader(short_val_dataset, batch_size=args.batch_size, shuffle=False)
 
     model = KalmanNetNN(feature_mode=args.feature_mode).to(device)
-    criterion = nn.MSELoss()
 
     f_mat = torch.eye(8, device=device)
     for i in range(4):
@@ -447,7 +520,10 @@ def train():
                     f_mat,
                     h_mat,
                     residual_gain_limit,
-                    criterion,
+                    args.delta_k_reg_weight,
+                    args.lowconf_thresh,
+                    args.hard_gap_weight,
+                    args.hard_lowconf_weight,
                     train_stats,
                     add_noise=add_noise,
                 )
@@ -474,7 +550,10 @@ def train():
                         f_mat,
                         h_mat,
                         residual_gain_limit,
-                        criterion,
+                        args.delta_k_reg_weight,
+                        args.lowconf_thresh,
+                        args.hard_gap_weight,
+                        args.hard_lowconf_weight,
                         val_stats,
                         add_noise=False,
                     )

@@ -1,3 +1,4 @@
+import argparse
 import os
 
 import numpy as np
@@ -176,6 +177,18 @@ def prepare_real_data(data_root, det_root, output_path="mot_train_data.pt"):
     )
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Prepare long-track MOT17 training data.")
+    parser.add_argument("--data-root", default="datasets/mot", help="MOT dataset root.")
+    parser.add_argument(
+        "--det-root",
+        default="YOLOX_outputs/yolox_s_mot17_half/track_results",
+        help="Detection or tracking result directory used to align GT and detections.",
+    )
+    parser.add_argument("--output-path", default="mot_train_data.pt", help="Output .pt file path.")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    det_root = "YOLOX_outputs/yolox_s_mot17_half/track_results"
-    prepare_real_data("datasets/mot", det_root)
+    args = parse_args()
+    prepare_real_data(args.data_root, args.det_root, args.output_path)

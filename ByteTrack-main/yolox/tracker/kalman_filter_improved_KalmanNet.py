@@ -45,14 +45,14 @@ class ImprovedKalmanFilter(object):
 
         self.use_neural_k = False
         self.net = None
-        self.feature_mode = "f1_f2_f4_conf"
+        self.feature_mode = "f2_f4_conf"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.image_scale_4d = np.array([1920.0, 1080.0, 1.0, 1080.0], dtype=np.float32)
         self.image_scale_8d = np.array(
             [1920.0, 1080.0, 1.0, 1080.0, 1920.0, 1080.0, 1.0, 1080.0],
             dtype=np.float32,
         )
-        self.residual_gain_limit = 0.30
+        self.residual_gain_limit = 0.45
 
         if KalmanNetNN is not None and os.path.exists(model_path):
             try:
@@ -62,7 +62,7 @@ class ImprovedKalmanFilter(object):
 
                 if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
                     state_dict = checkpoint["state_dict"]
-                    self.feature_mode = checkpoint.get("feature_mode", "f1_f2_f4_conf")
+                    self.feature_mode = checkpoint.get("feature_mode", "f2_f4_conf")
                 else:
                     state_dict = checkpoint
                     self.feature_mode = infer_feature_mode_from_state_dict(state_dict)
@@ -214,7 +214,10 @@ class ImprovedKalmanFilter(object):
                 scale_matrix = self.image_scale_8d[:, None] / self.image_scale_4d[None, :]
                 delta_k = delta_k_norm * scale_matrix
                 gain_span = np.maximum(np.abs(classical_gain), 1e-3)
-                dynamic_limit = self.residual_gain_limit - 0.20 * np.clip(conf_val, 0.1, 1.0)
+                conf_clip = np.clip(conf_val, 0.1, 1.0)
+                dynamic_limit = self.residual_gain_limit - 0.15 * conf_clip
+                if conf_clip < 0.3:
+                    dynamic_limit += 0.10
                 gain_residual = np.tanh(delta_k) * (dynamic_limit * gain_span)
                 kalman_gain = classical_gain + gain_residual
             except Exception as e:
