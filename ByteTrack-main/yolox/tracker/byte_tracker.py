@@ -29,6 +29,9 @@ class STrack(BaseTrack):
         self.mean, self.covariance = None, None
         self.is_activated = False
 
+        # 👇 [新增] 为每个目标独立维护 RNN 的隐状态
+        self.kf_hidden_state = None
+
         self.score = score
         self.tracklet_len = 0
 
@@ -69,13 +72,13 @@ class STrack(BaseTrack):
         self.start_frame = frame_id
 
     def re_activate(self, new_track, frame_id, new_id=False):
-        self.mean, self.covariance, self.kalman_hidden = self.kalman_filter.update(
-            self.mean,
-            self.covariance,
-            self.tlwh_to_xyah(new_track.tlwh),
+        # 👇 [关键修复]: 接收 3 个返回值，并传入当前隐状态和置信度
+        self.mean, self.covariance, self.kf_hidden_state = self.kalman_filter.update(
+            self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh),
             confidence=new_track.score,
-            hidden_state=self.kalman_hidden,
+            hidden_state=self.kf_hidden_state
         )
+
         self.tracklet_len = 0
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -99,12 +102,12 @@ class STrack(BaseTrack):
         score = new_track.score
 
         # === 修改后KF (带参数) ===
-        self.mean, self.covariance, self.kalman_hidden = self.kalman_filter.update(
-            self.mean,
-            self.covariance,
-            self.tlwh_to_xyah(new_tlwh),
-            confidence=score,
-            hidden_state=self.kalman_hidden,
+        # 仅保留下面这唯一的一次调用，接收三个返回值：
+        # 👇 同样接收 3 个参数并传入隐状态
+        self.mean, self.covariance, self.kf_hidden_state = self.kalman_filter.update(
+            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh),
+            confidence=new_track.score,
+            hidden_state=self.kf_hidden_state
         )
 
         # === 修改：原始KF (原始纯净版) ===
@@ -116,6 +119,7 @@ class STrack(BaseTrack):
         self.is_activated = True
 
         self.score = new_track.score
+
 
     @property
     # @jit(nopython=True)
@@ -184,9 +188,7 @@ class BYTETracker(object):
         self.det_thresh = args.track_thresh + 0.1
         self.buffer_size = int(frame_rate / 30.0 * args.track_buffer)
         self.max_time_lost = self.buffer_size
-        kalmannet_ckpt = getattr(args, "kalmannet_ckpt", "pretrained/kalmannet_best.pth")
-        self.kalman_filter = KalmanFilter(model_path=kalmannet_ckpt)
-        STrack.shared_kalman = self.kalman_filter
+        self.kalman_filter = KalmanFilter()
 
     def update(self, output_results, img_info, img_size):
         self.frame_id += 1
