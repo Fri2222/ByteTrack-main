@@ -103,9 +103,8 @@ class STrack(BaseTrack):
 
         # === 修改后KF (带参数) ===
         # 仅保留下面这唯一的一次调用，接收三个返回值：
-        # 👇 同样接收 3 个参数并传入隐状态
         self.mean, self.covariance, self.kf_hidden_state = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh),
+            self.mean, self.covariance, new_track.tlwh_to_xyah(new_track.tlwh),
             confidence=new_track.score,
             hidden_state=self.kf_hidden_state
         )

@@ -16,7 +16,8 @@ except ImportError:
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train KalmanNet (Exp10 modified with Exp21 Training Strategy).")
-    parser.add_argument("--short-epochs", type=int, default=40)
+    # 👇 [修改]：将默认训练轮数修改为 60 轮
+    parser.add_argument("--short-epochs", type=int, default=60)
     parser.add_argument("--long-epochs", type=int, default=20)
     parser.add_argument("--short-lr", type=float, default=1e-3)
     parser.add_argument("--long-lr", type=float, default=2e-4)
@@ -180,12 +181,9 @@ def run_sequence_batch(
         pred_meas = torch.matmul(pred_state, h_mat.t())
         innovation = z_meas - pred_meas
 
-        # 遵循 Exp10: 17维输入构建方式，不作分支切割，直接输入到网络
-        f1 = z_meas - prev_z_meas
+        # 👇 [核心修复]：遵循 Exp10 的 5 维输入构建方式 (F2 + Conf)
         f2 = innovation
-        f4 = prev_update
-
-        net_input = torch.cat([f1, f2, f4, conf], dim=1).unsqueeze(1)
+        net_input = torch.cat([f2, conf], dim=1).unsqueeze(1)
 
         # 遵循 Exp10: 模型直接输出完全体 k_gain (而非残差 delta_k)
         k_gain, hidden = model(net_input, hidden)
