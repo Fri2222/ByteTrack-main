@@ -1,304 +1,270 @@
-# yolox/tracker/kalman_filter_improved.py
-from loguru import logger  # <--- 添加这一行
+import os
+import warnings
+
 import numpy as np
 import scipy.linalg
 import torch
-import os
+from loguru import logger
 
-# 尝试导入 KalmanNet 模型定义
-# 如果你还没有创建 kalmannet_model.py，请先创建它，否则这里会报错
 try:
-    from .kalmannet_model import KalmanNetNN
+    from .kalmannet_model import KalmanNetNN, infer_feature_mode_from_state_dict
 except ImportError:
-    print("[Warning] kalmannet_model.py not found. Neural Kalman features disabled.")
     KalmanNetNN = None
+    infer_feature_mode_from_state_dict = None
+
+
+F1_BRANCH_SCALE = np.array([0.05, 0.05, 0.02, 0.05], dtype=np.float32)
+
+
+def stable_observation_diff(curr_meas, prev_meas, image_scale_4d):
+    raw_diff = (curr_meas - prev_meas) / image_scale_4d
+    return np.tanh(raw_diff / F1_BRANCH_SCALE)
+
+
+def build_feature_input(feature_mode, f1_norm, f2_norm, f4_norm, conf_tensor):
+    if feature_mode == "f2_conf":
+        return torch.cat([f2_norm, conf_tensor], dim=-1)
+    if feature_mode == "f2_f4_conf":
+        return torch.cat([f2_norm, f4_norm, conf_tensor], dim=-1)
+    if feature_mode == "f1_f2_f4_conf":
+        return torch.cat([f1_norm, f2_norm, f4_norm, conf_tensor], dim=-1)
+    raise ValueError(f"Unsupported feature_mode: {feature_mode}")
 
 
 class ImprovedKalmanFilter(object):
-    """
-    改进版卡尔曼滤波 (NSA-Kalman + Neural Interface)
-    1. 支持 NSA (Noise Scale Adaptive): 根据检测置信度动态调整测量噪声 R。
-    2. 支持 Neural Kalman Gain: 使用训练好的 GRU/LSTM 网络预测卡尔曼增益 K。
-    """
-
-    #状态空间 (State Space)：滤波器用 8 个数字来描述一个物体：[x, y, a, h, vx, vy, va, vh]。
-    # x, y 是框的中心点坐标。
-    # a 是框的宽高比（宽除以高），h 是框的高度。
-    # vx, vy, va, vh 是它们对应的速度（变化率）
     def __init__(self, model_path="pretrained/kalmannet_best.pth"):
-        ndim, dt = 4, 1.
+        ndim, dt = 4, 1.0
 
-        # F: 状态转移矩阵 (8x8),_motion_mat（运动矩阵）用来算预测
         self._motion_mat = np.eye(2 * ndim, 2 * ndim)
         for i in range(ndim):
             self._motion_mat[i, ndim + i] = dt
 
-        # H: 观测矩阵 (4x8),_update_mat（观测矩阵）用来提取坐标
         self._update_mat = np.eye(ndim, 2 * ndim)
+        self._std_weight_position = 1.0 / 20
+        self._std_weight_velocity = 1.0 / 160
 
-        # 基础权重 (经验值)
-        self._std_weight_position = 1. / 20
-        self._std_weight_velocity = 1. / 160
-
-        # === 集成 KalmanNet (可选) ===
         self.use_neural_k = False
         self.net = None
+        self.feature_mode = "f2_f4_conf"
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.image_scale_4d = np.array([1920.0, 1080.0, 1.0, 1080.0], dtype=np.float32)
+        self.image_scale_8d = np.array(
+            [1920.0, 1080.0, 1.0, 1080.0, 1920.0, 1080.0, 1.0, 1080.0],
+            dtype=np.float32,
+        )
+        self.residual_gain_limit = 0.45
 
-        # [调试 1] 确认一下这里的状态
-        # logger.info(f"DEBUG: KalmanNetNN Class is: {KalmanNetNN}")
-        # logger.info(f"DEBUG: Path exists? {os.path.exists(model_path)}")
-
-        # 只有当定义了网络类且权重文件存在时，才启用
         if KalmanNetNN is not None and os.path.exists(model_path):
             try:
-                self.net = KalmanNetNN(input_dim=5).to(self.device)
-                checkpoint = torch.load(model_path, map_location=self.device)
-                self.net.load_state_dict(checkpoint)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    checkpoint = torch.load(model_path, map_location=self.device)
+
+                if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+                    state_dict = checkpoint["state_dict"]
+                    self.feature_mode = checkpoint.get("feature_mode", "f2_f4_conf")
+                else:
+                    state_dict = checkpoint
+                    self.feature_mode = infer_feature_mode_from_state_dict(state_dict)
+
+                self.net = KalmanNetNN(feature_mode=self.feature_mode).to(self.device)
+                self.net.load_state_dict(state_dict)
                 self.net.eval()
                 self.use_neural_k = True
-
-                # [修改点] 使用 logger.info 并添加颜色标记
-                logger.info(f"✅ [KalmanNet] ACTIVATED! Loaded from: {model_path}")
-                logger.info(f"   [KalmanNet] Device: {self.device}")
-
+                logger.info(
+                    f"[KalmanNet] ACTIVATED! feature_mode={self.feature_mode} loaded from: {model_path}"
+                )
             except Exception as e:
-                logger.error(f"❌ [KalmanNet] Load Failed: {e}")
-                logger.info("   [KalmanNet] Fallback to Standard NSA-Kalman Filter.")
+                logger.error(f"[KalmanNet] Load Failed: {e}")
                 self.use_neural_k = False
-        else:
-            # 打印为什么没进来的原因
-            if KalmanNetNN is None:
-                logger.warning("⚠️ [KalmanNet] Class import failed (is None). Using Standard KF.")
-            elif not os.path.exists(model_path):
-                logger.warning(f"⚠️ [KalmanNet] Weight file not found: {model_path}. Using Standard KF.")
-            pass
 
-    #当第一次在视频里看到一个新目标时，调用这个函数
-    #不知道它的速度，所以速度全部设为 0 (mean_vel = np.zeros_like(mean_pos))
-    #给它初始化一个“不确定性矩阵”（covariance）来表示位置误差
-    def initiate(self, measurement):
-        """初始化轨迹"""
-        mean_pos = measurement
-        mean_vel = np.zeros_like(mean_pos)
-        mean = np.r_[mean_pos, mean_vel]
-
-        std = [
-            2 * self._std_weight_position * measurement[3],
-            2 * self._std_weight_position * measurement[3],
-            1e-2,
-            2 * self._std_weight_position * measurement[3],
-            10 * self._std_weight_velocity * measurement[3],
-            10 * self._std_weight_velocity * measurement[3],
-            1e-5,
-            10 * self._std_weight_velocity * measurement[3]]
-        covariance = np.diag(np.square(std))
-        return mean, covariance
-
-    #推测下一帧物体在哪里
-    def predict(self, mean, covariance):
-        """预测步骤 (纯物理模型)"""
-        std_pos = [
-            self._std_weight_position * mean[3],
-            self._std_weight_position * mean[3],
-            1e-2,
-            self._std_weight_position * mean[3]]
-        std_vel = [
-            self._std_weight_velocity * mean[3],
-            self._std_weight_velocity * mean[3],
-            1e-5,
-            self._std_weight_velocity * mean[3]]
-
-        # Q: 过程噪声矩阵
-        motion_cov = np.diag(np.square(np.r_[std_pos, std_vel]))
-
-        # x' = Fx
-        mean = np.dot(mean, self._motion_mat.T)
-        # P' = FPF^T + Q
-        covariance = np.linalg.multi_dot((
-            self._motion_mat, covariance, self._motion_mat.T)) + motion_cov
-
-        return mean, covariance
-
-    #confidence 是目标检测器 YOLOX给的置信度
-    def project(self, mean, covariance, confidence=None):
-        """
-        投影状态到观测空间 (论文复现版)
-        Reference: Eq(5) in Paper: R_tilde = (1 - c_k) * R
-        """
+    def _get_measurement_noise(self, mean, confidence=None):
         std = [
             self._std_weight_position * mean[3],
             self._std_weight_position * mean[3],
             1e-1,
-            self._std_weight_position * mean[3]]
-
-        # 基础 R 矩阵
+            self._std_weight_position * mean[3],
+        ]
         innovation_cov = np.diag(np.square(std))
 
-        # === [改进核心: 论文版 NSA] ===
         if confidence is not None:
-            # 论文策略：置信度越低，噪声 R 越大
-            # 公式变种：R_new = R_base / confidence
-            # (当 confidence=1.0, R不变; confidence=0.5, R变大2倍)
-            # 或者使用论文的 (1 - ck) 逻辑的逆变种，这里推荐用除法更稳健
-
-            # 限制 confidence 范围防止除零
             conf = np.clip(confidence, 0.1, 0.99)
+            innovation_cov *= (1.0 / conf)
 
-            # 系数 factor：置信度高(0.9) -> factor小(1.1); 置信度低(0.1) -> factor大(10.0)
-            #如果置信度很低（比如 0.2），scale_factor 就会变成 5,把它乘到测量噪声 innovation_cov 上
-            scale_factor = 1.0 / conf
+        return innovation_cov
 
-            # 放大噪声协方差
-            innovation_cov *= scale_factor
+    def _compute_classical_gain(self, covariance, projected_cov):
+        chol_factor, lower = scipy.linalg.cho_factor(
+            projected_cov, lower=True, check_finite=False
+        )
+        return scipy.linalg.cho_solve(
+            (chol_factor, lower),
+            np.dot(covariance, self._update_mat.T).T,
+            check_finite=False,
+        ).T
 
+    def initiate(self, measurement):
+        mean_pos = measurement
+        mean_vel = np.zeros_like(mean_pos)
+        mean = np.r_[mean_pos, mean_vel]
+        std = [
+            2 * self._std_weight_position * measurement[3],
+            2 * self._std_weight_position * measurement[3],
+            1e-2,
+            2 * self._std_weight_position * measurement[3],
+            10 * self._std_weight_velocity * measurement[3],
+            10 * self._std_weight_velocity * measurement[3],
+            1e-5,
+            10 * self._std_weight_velocity * measurement[3],
+        ]
+        covariance = np.diag(np.square(std))
+        return mean, covariance
+
+    def predict(self, mean, covariance):
+        std_pos = [
+            self._std_weight_position * mean[3],
+            self._std_weight_position * mean[3],
+            1e-2,
+            self._std_weight_position * mean[3],
+        ]
+        std_vel = [
+            self._std_weight_velocity * mean[3],
+            self._std_weight_velocity * mean[3],
+            1e-5,
+            self._std_weight_velocity * mean[3],
+        ]
+        motion_cov = np.diag(np.square(np.r_[std_pos, std_vel]))
+        mean = np.dot(mean, self._motion_mat.T)
+        covariance = np.linalg.multi_dot(
+            (self._motion_mat, covariance, self._motion_mat.T)
+        ) + motion_cov
+        return mean, covariance
+
+    def project(self, mean, covariance, confidence=None):
+        innovation_cov = self._get_measurement_noise(mean, confidence)
         mean = np.dot(self._update_mat, mean)
-        covariance = np.linalg.multi_dot((
-            self._update_mat, covariance, self._update_mat.T))
+        covariance = np.linalg.multi_dot(
+            (self._update_mat, covariance, self._update_mat.T)
+        )
         return mean, covariance + innovation_cov
 
     def multi_predict(self, mean, covariance):
-        """向量化预测 (代码保持不变，用于加速)"""
         std_pos = [
             self._std_weight_position * mean[:, 3],
             self._std_weight_position * mean[:, 3],
             1e-2 * np.ones_like(mean[:, 3]),
-            self._std_weight_position * mean[:, 3]]
+            self._std_weight_position * mean[:, 3],
+        ]
         std_vel = [
             self._std_weight_velocity * mean[:, 3],
             self._std_weight_velocity * mean[:, 3],
             1e-5 * np.ones_like(mean[:, 3]),
-            self._std_weight_velocity * mean[:, 3]]
+            self._std_weight_velocity * mean[:, 3],
+        ]
         sqr = np.square(np.r_[std_pos, std_vel]).T
-
-        motion_cov = []
-        for i in range(len(mean)):
-            motion_cov.append(np.diag(sqr[i]))
+        motion_cov = [np.diag(sqr[i]) for i in range(len(mean))]
         motion_cov = np.asarray(motion_cov)
-
         mean = np.dot(mean, self._motion_mat.T)
         left = np.dot(self._motion_mat, covariance).transpose((1, 0, 2))
         covariance = np.dot(left, self._motion_mat.T) + motion_cov
-
         return mean, covariance
 
     def update(self, mean, covariance, measurement, confidence=None, hidden_state=None):
-        """
-        更新步骤。
-        Args:
-            mean: 预测的状态均值
-            covariance: 预测的协方差
-            measurement: 当前观测值 (x, y, a, h)
-            confidence: YOLOX 检测置信度 (用于 NSA)
-            hidden_state: (可选) RNN/GRU 的隐状态，用于 KalmanNet
-        Returns:
-            new_mean, new_covariance
-        """
-        # 1. 投影 (包含 NSA 噪声调整)
         projected_mean, projected_cov = self.project(mean, covariance, confidence)
-
-        # 2. 计算残差 (Innovation),预测值与观测值之间的差值
         innovation = measurement - projected_mean
+        classical_gain = self._compute_classical_gain(covariance, projected_cov)
+        kalman_gain = classical_gain
 
-        # 👇 [新增] 定义一个新的变量来接收新记忆，默认等于旧记忆
-        new_hidden_state = hidden_state
-        # 3. 计算卡尔曼增益 K
-        kalman_gain = None
+        if hidden_state is None:
+            gru_hidden = None
+            f1 = np.zeros(4, dtype=np.float32)
+            f4 = np.zeros(8, dtype=np.float32)
+        else:
+            gru_hidden, prev_measurement, prev_update_term = hidden_state
+            f1 = stable_observation_diff(
+                measurement.astype(np.float32, copy=False),
+                prev_measurement.astype(np.float32, copy=False),
+                self.image_scale_4d,
+            )
+            f4 = prev_update_term.astype(np.float32, copy=False)
 
-        # === [改进分支: Neural Kalman] ===
-        #Neural Kalman 分支，将残差缩小到0~1范围内，再送进神经网络 self.net，得到一个K
-        #传统分支，复杂的矩阵求逆 scipy.linalg.cho_solve来计算K
+        new_gru_hidden = gru_hidden
+
         if self.use_neural_k:
             try:
-                # [关键修复]: 必须进行归一化！
-                # MOT17 图片大小约为 1920x1080。这里我们用一个近似值进行缩放。
-                # 输入是 (x, y, a, h)，对应缩放因子 (1920, 1080, 1, 1080)
-                scale_tensor = torch.tensor([[[1920.0, 1080.0, 1.0, 1080.0]]], device=self.device)
-
-                # 准备 Tensor 输入: [Batch=1, Seq=1, Feat=4]
-                inno_tensor = torch.tensor(innovation, dtype=torch.float32).view(1, 1, -1).to(self.device)
-
-                # 将输入缩小到 0~1 范围 (匹配训练时的分布)
-                inno_tensor_norm = inno_tensor / scale_tensor
-
-                # 👇 [新增代码]：将传进来的 confidence 也转成 Tensor 并拼接进去
+                f1_norm = torch.tensor(f1, dtype=torch.float32).view(1, 1, -1).to(self.device)
+                f2_norm = torch.tensor(
+                    innovation / self.image_scale_4d, dtype=torch.float32
+                ).view(1, 1, -1).to(self.device)
+                f4_norm = torch.tensor(
+                    f4 / self.image_scale_8d, dtype=torch.float32
+                ).view(1, 1, -1).to(self.device)
                 conf_val = confidence if confidence is not None else 1.0
-                conf_tensor = torch.tensor([[[conf_val]]], dtype=torch.float32, device=self.device)
-
-                # 拼接：[1, 1, 4] 和 [1, 1, 1] -> [1, 1, 5]
-                net_input = torch.cat([inno_tensor_norm, conf_tensor], dim=-1)
+                conf_tensor = torch.tensor(
+                    [[[conf_val]]], dtype=torch.float32, device=self.device
+                )
+                net_input = build_feature_input(
+                    self.feature_mode, f1_norm, f2_norm, f4_norm, conf_tensor
+                )
 
                 with torch.no_grad():
-                    # 👇 [关键修复]: 用 new_hidden_state 接收网络输出的新记忆！
-                    k_tensor, new_hidden_state = self.net(net_input, hidden_state)
-                    # 2. 转回 Numpy (注意这里的名字必须是 kalman_gain_norm！)
-                    kalman_gain_norm = k_tensor.squeeze(0).cpu().numpy()
+                    delta_k_tensor, new_gru_hidden = self.net(net_input, gru_hidden)
+                    delta_k_norm = delta_k_tensor.squeeze(0).cpu().numpy()
 
-                    # 👇👇👇 [核心修复：物理尺度逆变换] 👇👇👇
-                    # 定义状态空间(8维)和观测空间(4维)的物理尺度
-                    scale_8d = np.array([1920.0, 1080.0, 1.0, 1080.0, 1920.0, 1080.0, 1.0, 1080.0])
-                    scale_4d = np.array([1920.0, 1080.0, 1.0, 1080.0])
-
-                    # 利用 NumPy 广播机制进行矩阵尺度变换： K_real = K_norm * (S_8 / S_4)
-                    kalman_gain = kalman_gain_norm * (scale_8d[:, None] / scale_4d[None, :])
-                    # 👆👆👆 ============================== 👆👆👆
-
-                    # 👇👇👇 [新增的 DEBUG 探针代码，直接复制放在这里] 👇👇👇
-                    if not hasattr(self, 'debug_print_count'):
-                        self.debug_print_count = 0
-
-                    if self.debug_print_count < 5:
-                        print(
-                            f"\n=================== [KALMANNET DEBUG {self.debug_print_count + 1}/5] ===================")
-                        print(f" 输入残差 (Pixels): {np.round(innovation, 2)}")
-                        print(f" 归一化输入 (Network In): {np.round(inno_tensor_norm.cpu().numpy()[0][0], 4)}")
-                        print(f" 输出增益 K (前4行-位置更新):\n{np.round(kalman_gain[:4, :], 4)}")
-                        print(f" 输出增益 K (后4行-速度更新):\n{np.round(kalman_gain[4:, :], 4)}")
-                        print(f" 隐状态 Q (Mean): {new_hidden_state[0].mean().item():.6f}")
-                        print(f"===================================================================\n")
-                        self.debug_print_count += 1
-                    # 👆👆👆 [DEBUG 探针代码结束] 👆👆👆
-
+                scale_matrix = self.image_scale_8d[:, None] / self.image_scale_4d[None, :]
+                delta_k = delta_k_norm * scale_matrix
+                gain_span = np.maximum(np.abs(classical_gain), 1e-3)
+                conf_clip = np.clip(conf_val, 0.1, 1.0)
+                dynamic_limit = self.residual_gain_limit - 0.15 * conf_clip
+                if conf_clip < 0.3:
+                    dynamic_limit += 0.10
+                gain_residual = np.tanh(delta_k) * (dynamic_limit * gain_span)
+                kalman_gain = classical_gain + gain_residual
             except Exception as e:
-                print(f"Neural K Error: {e}") # 调试时可以打开
-                kalman_gain = None
+                logger.warning(f"[KalmanNet] Neural gain fallback to classical KF: {e}")
+                kalman_gain = classical_gain
 
-        # === [标准分支: 传统计算] ===
-        # 如果没开启神经网络，或者神经网络失败，或者神经网络输出 NaN，使用标准公式
-        # 增加 np.isnan 检查，防止网络输出 nan 导致崩溃
-        if kalman_gain is None or np.isnan(kalman_gain).any():
-            chol_factor, lower = scipy.linalg.cho_factor(
-                projected_cov, lower=True, check_finite=False)
-            kalman_gain = scipy.linalg.cho_solve(
-                (chol_factor, lower), np.dot(covariance, self._update_mat.T).T,
-                check_finite=False).T
+        if np.isnan(kalman_gain).any() or np.isinf(kalman_gain).any():
+            kalman_gain = classical_gain
 
-        # 4. 修正状态，用算好的 K 乘以残差，加到预测值上，得到最精准的当前状态
-        new_mean = mean + np.dot(innovation, kalman_gain.T)
-        new_covariance = covariance - np.linalg.multi_dot((
-            kalman_gain, projected_cov, kalman_gain.T))
+        update_term = np.dot(innovation, kalman_gain.T)
+        new_mean = mean + update_term
 
+        measurement_cov = self._get_measurement_noise(mean, confidence)
+        identity = np.eye(covariance.shape[0], dtype=np.float32)
+        innovation_factor = identity - np.dot(kalman_gain, self._update_mat)
+        new_covariance = np.linalg.multi_dot(
+            (innovation_factor, covariance, innovation_factor.T)
+        )
+        new_covariance += np.linalg.multi_dot(
+            (kalman_gain, measurement_cov, kalman_gain.T)
+        )
+        new_covariance = 0.5 * (new_covariance + new_covariance.T)
 
+        new_hidden_state_packaged = (
+            new_gru_hidden,
+            measurement.astype(np.float32, copy=False),
+            update_term.astype(np.float32, copy=False),
+        )
+        return new_mean, new_covariance, new_hidden_state_packaged
 
-        return new_mean, new_covariance, new_hidden_state
-
-    #匹配，马氏距离匈牙利匹配
-    def gating_distance(self, mean, covariance, measurements, only_position=False, metric='maha'):
-        """计算马氏距离 (用于匈牙利匹配)"""
+    def gating_distance(self, mean, covariance, measurements, only_position=False, metric="maha"):
         mean, covariance = self.project(mean, covariance)
         if only_position:
             mean, covariance = mean[:2], covariance[:2, :2]
             measurements = measurements[:, :2]
 
         d = measurements - mean
-        if metric == 'gaussian':
+        if metric == "gaussian":
             return np.sum(d * d, axis=1)
-        elif metric == 'maha':
+        if metric == "maha":
             cholesky_factor = np.linalg.cholesky(covariance)
             z = scipy.linalg.solve_triangular(
-                cholesky_factor, d.T, lower=True, check_finite=False,
-                overwrite_b=True)
-            squared_maha = np.sum(z * z, axis=0)
-            return squared_maha
-        else:
-            raise ValueError('invalid distance metric')
+                cholesky_factor,
+                d.T,
+                lower=True,
+                check_finite=False,
+                overwrite_b=True,
+            )
+            return np.sum(z * z, axis=0)
+        raise ValueError("invalid distance metric")

@@ -1,59 +1,160 @@
 import torch
 import torch.nn as nn
 
-# ==========================================
-# 🎯 全局维度宏定义 (Macros)
-# 保证 Train, Model, Track 三端绝对对齐！
-# ==========================================
-KF_INPUT_DIM = 5   # 4维物理残差 (x, y, a, h) + 1维检测置信度 (conf)
-KF_STATE_DIM = 8   # 状态空间维度 [x, y, a, h, vx, vy, va, vh]
-KF_OBS_DIM = 4     # 观测空间维度 [x, y, a, h]
-KF_HIDDEN_DIM = (KF_STATE_DIM ** 2) + (KF_OBS_DIM ** 2)  # 论文设定: m^2 + n^2 = 80
+KF_STATE_DIM = 8
+KF_OBS_DIM = 4
+KF_HIDDEN_DIM = 80
+
+FEATURE_SPECS = {
+    "f2_conf": {
+        "input_dim": 5,
+        "f1_dim": 0,
+        "main_input_dim": 5,
+        "use_f1_branch": False,
+    },
+    "f2_f4_conf": {
+        "input_dim": 13,
+        "f1_dim": 0,
+        "main_input_dim": 13,
+        "use_f1_branch": False,
+    },
+    "f1_f2_f4_conf": {
+        "input_dim": 17,
+        "f1_dim": 4,
+        "main_input_dim": 13,
+        "use_f1_branch": True,
+    },
+}
+
+
+def get_feature_spec(feature_mode):
+    if feature_mode not in FEATURE_SPECS:
+        raise ValueError(f"Unsupported feature_mode: {feature_mode}")
+    return FEATURE_SPECS[feature_mode]
+
+
+def infer_feature_mode_from_state_dict(state_dict):
+    if any(key.startswith("f1_encoder.") for key in state_dict.keys()):
+        return "f1_f2_f4_conf"
+
+    fc_in1_weight = state_dict.get("fc_in1.weight")
+    if fc_in1_weight is None:
+        return "f1_f2_f4_conf"
+
+    in_features = fc_in1_weight.shape[1]
+    if in_features == 5:
+        return "f2_conf"
+    if in_features == 13:
+        return "f2_f4_conf"
+    return "f1_f2_f4_conf"
 
 
 class KalmanNetNN(nn.Module):
-    """
-    KalmanNet 架构 #1: 单层大容量黑盒跟踪 (Single GRU)
-    用一个大容量的 GRU 直接隐式拟合所有的卡尔曼滤波状态。
-    """
+    def __init__(
+        self,
+        feature_mode="f1_f2_f4_conf",
+        state_dim=KF_STATE_DIM,
+        obs_dim=KF_OBS_DIM,
+        hidden_dim=KF_HIDDEN_DIM,
+    ):
+        super(KalmanNetNN, self).__init__()
+        spec = get_feature_spec(feature_mode)
 
-    # hidden_dim = 80(即m ^ 2 + n ^ 2)
-    def __init__(self, input_dim=KF_INPUT_DIM, state_dim=KF_STATE_DIM, obs_dim=KF_OBS_DIM, hidden_dim=KF_HIDDEN_DIM):
-        super(KalmanNetNN, self).__init__()
-        super(KalmanNetNN, self).__init__()
+        self.feature_mode = feature_mode
         self.state_dim = state_dim
         self.obs_dim = obs_dim
+        self.f1_dim = spec["f1_dim"]
+        self.main_input_dim = spec["main_input_dim"]
+        self.use_f1_branch = spec["use_f1_branch"]
+        self.input_dim = spec["input_dim"]
 
+        self.h1_dim = state_dim * state_dim
+        self.h2_dim = state_dim * state_dim
+        self.h3_dim = obs_dim * obs_dim
 
-        self.hidden_dim = hidden_dim
+        if self.use_f1_branch:
+            self.f1_encoder = nn.Sequential(
+                nn.Linear(self.f1_dim, hidden_dim),
+                nn.Tanh(),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.Tanh(),
+            )
+            self.main_encoder = nn.Sequential(
+                nn.Linear(self.main_input_dim, hidden_dim * 2),
+                nn.Tanh(),
+                nn.Linear(hidden_dim * 2, hidden_dim * 2),
+                nn.Tanh(),
+            )
+            fused_dim = hidden_dim * 3
+        else:
+            self.f1_encoder = None
+            self.main_encoder = nn.Sequential(
+                nn.Linear(self.main_input_dim, hidden_dim * 2),
+                nn.Tanh(),
+                nn.Linear(hidden_dim * 2, hidden_dim * 2),
+                nn.Tanh(),
+            )
+            fused_dim = hidden_dim * 2
 
-        # 核心记忆网络：单个大容量 GRU 单元
-        self.gru = nn.GRU(input_dim, hidden_dim, batch_first=True)
+        self.fc_in1 = nn.Linear(fused_dim, self.h1_dim)
+        self.fc_in2 = nn.Linear(fused_dim, self.h2_dim)
+        self.fc_in3 = nn.Linear(fused_dim, self.h3_dim)
 
-        # 增益输出层：直接将 GRU 的隐藏特征映射为卡尔曼增益 K
-        # hidden_dim的整数倍
-        self.fc = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 2),
+        self.gru_q = nn.GRU(self.h1_dim, self.h1_dim, batch_first=True)
+        self.gru_sigma = nn.GRU(
+            self.h2_dim + self.h1_dim, self.h2_dim, batch_first=True
+        )
+        self.fc_sigma_to_s = nn.Linear(self.h2_dim, self.h3_dim)
+        self.gru_s = nn.GRU(self.h3_dim + self.h3_dim, self.h3_dim, batch_first=True)
+
+        self.fc_out = nn.Sequential(
+            nn.Linear(self.h2_dim + self.h3_dim, hidden_dim * 2),
             nn.ReLU(),
-            # 第二层：把 160 维的中间特征，压缩成最终需要的卡尔曼增益大小
-            # 这里的 state_dim = 8, self.obs_dim = 4
-            # 所以这行等价于 nn.Linear(160, 32)
-            nn.Linear(hidden_dim * 2, state_dim * obs_dim)
+            nn.Linear(hidden_dim * 2, state_dim * obs_dim),
         )
 
-    def forward(self, inputs, hidden_state=None):
-        # GRU 前向传播
-        # 如果 hidden_state 是 None，PyTorch 的 GRU 会极其省事地自动初始化为全零张量
-        gru_out, new_hidden = self.gru(inputs, hidden_state)
+        nn.init.zeros_(self.fc_out[-1].weight)
+        nn.init.zeros_(self.fc_out[-1].bias)
 
-        # 提取序列最后一个时间步的输出特征进行映射
-        # gru_out shape: [Batch, Seq, hidden_dim] -> 取 [:, -1, :] 变成 [Batch, hidden_dim]
-        last_out = gru_out[:, -1, :]
+    def encode_inputs(self, inputs):
+        if self.use_f1_branch:
+            f1_inputs = inputs[..., : self.f1_dim]
+            main_inputs = inputs[..., self.f1_dim :]
+            f1_embed = self.f1_encoder(f1_inputs)
+            main_embed = self.main_encoder(main_inputs)
+            return torch.cat([f1_embed, main_embed], dim=-1)
+        return self.main_encoder(inputs)
 
-        # 计算增益 K 扁平化数据
-        k_flat = self.fc(last_out)
+    def forward(self, inputs, hidden_states=None):
+        batch_size = inputs.size(0)
 
-        # 重塑为目标矩阵维度 [Batch, 8, 4]
+        if hidden_states is None:
+            device = inputs.device
+            h_q_0 = torch.zeros(1, batch_size, self.h1_dim, device=device)
+            h_sigma_0 = torch.zeros(1, batch_size, self.h2_dim, device=device)
+            h_s_0 = torch.zeros(1, batch_size, self.h3_dim, device=device)
+        else:
+            h_q_0, h_sigma_0, h_s_0 = hidden_states
+
+        fused_inputs = self.encode_inputs(inputs)
+
+        x1 = torch.tanh(self.fc_in1(fused_inputs))
+        out_q, h_q_n = self.gru_q(x1, h_q_0)
+
+        x2 = torch.tanh(self.fc_in2(fused_inputs))
+        gru_sigma_input = torch.cat([x2, out_q], dim=-1)
+        out_sigma, h_sigma_n = self.gru_sigma(gru_sigma_input, h_sigma_0)
+
+        x3 = torch.tanh(self.fc_in3(fused_inputs))
+        sigma_mapped = self.fc_sigma_to_s(out_sigma)
+        gru_s_input = torch.cat([x3, sigma_mapped], dim=-1)
+        out_s, h_s_n = self.gru_s(gru_s_input, h_s_0)
+
+        last_out_sigma = out_sigma[:, -1, :]
+        last_out_s = out_s[:, -1, :]
+        k_input = torch.cat([last_out_sigma, last_out_s], dim=-1)
+        k_flat = self.fc_out(k_input)
+
         k_gain = k_flat.view(-1, self.state_dim, self.obs_dim)
-
-        return k_gain, new_hidden
+        new_hidden_states = (h_q_n, h_sigma_n, h_s_n)
+        return k_gain, new_hidden_states
