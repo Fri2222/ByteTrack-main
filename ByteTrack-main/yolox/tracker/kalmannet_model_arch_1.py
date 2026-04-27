@@ -2,58 +2,87 @@ import torch
 import torch.nn as nn
 
 # ==========================================
-# 🎯 全局维度宏定义 (Macros)
-# 保证 Train, Model, Track 三端绝对对齐！
+# 全局维度宏定义
+# F2(4维) + F4(8维) + conf(1维) = 13 维
 # ==========================================
-KF_INPUT_DIM = 5   # 4维物理残差 (x, y, a, h) + 1维检测置信度 (conf)
-KF_STATE_DIM = 8   # 状态空间维度 [x, y, a, h, vx, vy, va, vh]
-KF_OBS_DIM = 4     # 观测空间维度 [x, y, a, h]
-KF_HIDDEN_DIM = (KF_STATE_DIM ** 2) + (KF_OBS_DIM ** 2)  # 论文设定: m^2 + n^2 = 80
+KF_INPUT_DIM  = 13
+KF_STATE_DIM  = 8   # [x, y, a, h, vx, vy, va, vh]
+KF_OBS_DIM    = 4   # [x, y, a, h]
+KF_HIDDEN_DIM = (KF_STATE_DIM ** 2) + (KF_OBS_DIM ** 2)  # m²+n² = 80
 
 
 class KalmanNetNN(nn.Module):
     """
-    KalmanNet 架构 #1: 单层大容量黑盒跟踪 (Single GRU)
-    用一个大容量的 GRU 直接隐式拟合所有的卡尔曼滤波状态。
+    KalmanNet 架构一 (Architecture #1, 论文 Fig. 3)
+
+    使用单个 GRU 联合隐式追踪所有二阶统计矩（Q、Sigma、S），
+    通过 FC 输入层将特征映射到 GRU 输入空间，
+    再由 FC 输出层将 GRU 隐状态映射为卡尔曼增益 K。
+
+    输入特征 (13 维):
+        F2  (4-d): 新息差值  y_t - y_hat_{t|t-1}
+        F4  (8-d): 前向更新差值  x_hat_{t|t} - x_hat_{t|t-1}
+        conf(1-d): 检测置信度
+
+    fc_in  使用 Tanh: 保留残差正负符号的同时引入非线性。
+    fc_out 中间层使用 ReLU: 仅在特征高度抽象后使用。
+    隐状态格式: 单个张量 h_n，shape = (1, B, gru_hidden_dim)
     """
 
-    # hidden_dim = 80(即m ^ 2 + n ^ 2)
-    def __init__(self, input_dim=KF_INPUT_DIM, state_dim=KF_STATE_DIM, obs_dim=KF_OBS_DIM, hidden_dim=KF_HIDDEN_DIM):
+    def __init__(self,
+                 input_dim:  int = KF_INPUT_DIM,
+                 state_dim:  int = KF_STATE_DIM,
+                 obs_dim:    int = KF_OBS_DIM,
+                 hidden_dim: int = KF_HIDDEN_DIM):
         super(KalmanNetNN, self).__init__()
-        super(KalmanNetNN, self).__init__()
-        self.state_dim = state_dim
-        self.obs_dim = obs_dim
 
+        self.state_dim      = state_dim
+        self.obs_dim        = obs_dim
+        self.gru_hidden_dim = hidden_dim  # 80 = m^2 + n^2
 
-        self.hidden_dim = hidden_dim
-
-        # 核心记忆网络：单个大容量 GRU 单元
-        self.gru = nn.GRU(input_dim, hidden_dim, batch_first=True)
-
-        # 增益输出层：直接将 GRU 的隐藏特征映射为卡尔曼增益 K
-        # hidden_dim的整数倍
-        self.fc = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 2),
-            nn.ReLU(),
-            # 第二层：把 160 维的中间特征，压缩成最终需要的卡尔曼增益大小
-            # 这里的 state_dim = 8, self.obs_dim = 4
-            # 所以这行等价于 nn.Linear(160, 32)
-            nn.Linear(hidden_dim * 2, state_dim * obs_dim)
+        # FC 输入层: 13 → gru_hidden_dim（Tanh 保留符号 + 非线性）
+        self.fc_in = nn.Sequential(
+            nn.Linear(input_dim, self.gru_hidden_dim),
+            nn.Tanh()
         )
 
-    def forward(self, inputs, hidden_state=None):
-        # GRU 前向传播
-        # 如果 hidden_state 是 None，PyTorch 的 GRU 会极其省事地自动初始化为全零张量
-        gru_out, new_hidden = self.gru(inputs, hidden_state)
+        # 核心单 GRU（联合追踪所有二阶矩）
+        self.gru = nn.GRU(self.gru_hidden_dim, self.gru_hidden_dim,
+                          batch_first=True)
 
-        # 提取序列最后一个时间步的输出特征进行映射
-        # gru_out shape: [Batch, Seq, hidden_dim] -> 取 [:, -1, :] 变成 [Batch, hidden_dim]
-        last_out = gru_out[:, -1, :]
+        # FC 输出层: gru_hidden_dim → K (state_dim x obs_dim = 32)
+        self.fc_out = nn.Sequential(
+            nn.Linear(self.gru_hidden_dim, hidden_dim * 2),  # 80 → 160
+            nn.ReLU(),
+            nn.Linear(hidden_dim * 2, state_dim * obs_dim)   # 160 → 32
+        )
 
-        # 计算增益 K 扁平化数据
-        k_flat = self.fc(last_out)
+    def forward(self, inputs, hidden_states=None):
+        """
+        inputs:        (B, 1, 13)
+        hidden_states: None 或 (1, B, gru_hidden_dim)
+        returns:
+            k_gain:     (B, state_dim, obs_dim) = (B, 8, 4)
+            h_n:        (1, B, gru_hidden_dim)
+        """
+        batch_size = inputs.size(0)
 
-        # 重塑为目标矩阵维度 [Batch, 8, 4]
-        k_gain = k_flat.view(-1, self.state_dim, self.obs_dim)
+        # 隐状态初始化
+        if hidden_states is None:
+            h_0 = torch.zeros(1, batch_size, self.gru_hidden_dim,
+                              device=inputs.device)
+        else:
+            h_0 = hidden_states
 
-        return k_gain, new_hidden
+        # FC 输入层: 特征映射 + Tanh
+        x = self.fc_in(inputs)          # (B, 1, gru_hidden_dim)
+
+        # GRU 前向
+        out, h_n = self.gru(x, h_0)    # out: (B, 1, gru_hidden_dim)
+
+        # FC 输出层: 隐状态 → 卡尔曼增益
+        last_out = out[:, -1, :]        # (B, gru_hidden_dim)
+        k_flat   = self.fc_out(last_out)  # (B, state_dim * obs_dim)
+        k_gain   = k_flat.view(-1, self.state_dim, self.obs_dim)  # (B, 8, 4)
+
+        return k_gain, h_n
