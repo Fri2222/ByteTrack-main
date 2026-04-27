@@ -1,16 +1,14 @@
-import argparse
 import os
-
 import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
 
 
-SHORT_SEQ_LEN = 20
-SHORT_SEQ_STEP = 2
-
-
+#iou_batch计算预测框和真实框交互比
 def iou_batch(bb_test, bb_gt):
+    """
+    计算检测框与GT之间的IoU矩阵
+    """
     bb_gt = np.expand_dims(bb_gt, 0)
     bb_test = np.expand_dims(bb_test, 1)
 
@@ -19,176 +17,149 @@ def iou_batch(bb_test, bb_gt):
     xx2 = np.minimum(bb_test[..., 0] + bb_test[..., 2], bb_gt[..., 0] + bb_gt[..., 2])
     yy2 = np.minimum(bb_test[..., 1] + bb_test[..., 3], bb_gt[..., 1] + bb_gt[..., 3])
 
-    w = np.maximum(0.0, xx2 - xx1)
-    h = np.maximum(0.0, yy2 - yy1)
-    inter = w * h
+    w = np.maximum(0., xx2 - xx1)
+    h = np.maximum(0., yy2 - yy1)
+    wh = w * h
 
-    union = (bb_test[..., 2] * bb_test[..., 3]) + (bb_gt[..., 2] * bb_gt[..., 3]) - inter
+    union = (bb_test[..., 2] * bb_test[..., 3]) + (bb_gt[..., 2] * bb_gt[..., 3]) - wh
     union = np.maximum(union, 1e-6)
-    return inter / union
 
+    o = wh / union
+    return o
 
+#load_mot_file读取数据集文本
 def load_mot_file(filepath):
+    """加载 MOT 格式文件"""
     if not os.path.exists(filepath):
         return {}
     try:
-        data = np.loadtxt(filepath, delimiter=",")
-    except Exception:
+        data = np.loadtxt(filepath, delimiter=',')
+    except:
         return {}
 
+    frames = {}
+    # 处理只有一行数据的情况
     if len(data.shape) < 2:
         data = data.reshape(1, -1)
 
-    frames = {}
     for row in data:
         frame_id = int(row[0])
-        frames.setdefault(frame_id, []).append(row)
+        if frame_id not in frames:
+            frames[frame_id] = []
+        frames[frame_id].append(row)
     return frames
 
 
-def xywh_to_xyah(row):
-    x, y, w, h = row
-    return [x + w / 2.0, y + h / 2.0, w / h, h]
-
-
-def build_track_collections(data_root, det_root):
-    train_dir = os.path.join(data_root, "train")
+def prepare_real_data(data_root, det_root):
+    train_dir = os.path.join(data_root, 'train')
     seqs = os.listdir(train_dir)
 
-    long_tracks_input = []
-    long_tracks_gt = []
-    long_tracks_frame_ids = []
-    long_track_meta = []
-    short_sample_count = 0
+    all_tracks_input = []  # (x, y, a, h, conf)
+    all_tracks_gt = []  # (x, y, a, h)
 
-    print(f"Processing real MOT data from {det_root} ...")
+    SEQ_LEN = 20
 
+    print(f"Processing Real Data from {det_root}...")
+
+    ## ...加载真实文件(GT)和预测文件(Det)...
     for seq in seqs:
-        if "FRCNN" not in seq:
-            continue
+        if 'FRCNN' not in seq: continue
 
-        gt_path = os.path.join(train_dir, seq, "gt", "gt.txt")
-        det_path = os.path.join(det_root, f"{seq}.txt")
-
+        # 1. 加载 GT
+        gt_path = os.path.join(train_dir, seq, 'gt', 'gt.txt')
         gt_frames = load_mot_file(gt_path)
+
+        # 2. 加载 Detection (YOLOX 结果)
+        # 注意：请确保文件名匹配，例如 MOT17-02-FRCNN.txt
+        det_path = os.path.join(det_root, f"{seq}.txt")
         det_frames = load_mot_file(det_path)
+
         if not det_frames:
-            print(f"Warning: no detection file for {seq}, skipping.")
+            print(f"Warning: No detection file for {seq}, skipping.")
             continue
 
-        print(f"Aligning {seq} ...")
+        print(f"Aligning {seq}...")
+
+        # 临时存储：tracks[gt_id] = {'det': [], 'gt': []}
         matched_tracks = {}
-        common_frames = sorted(set(gt_frames.keys()) & set(det_frames.keys()))
+
+        common_frames = sorted(list(set(gt_frames.keys()) & set(det_frames.keys())))
 
         for fid in common_frames:
-            gts = np.asarray(gt_frames[fid], dtype=np.float32)
-            dets = np.asarray(det_frames[fid], dtype=np.float32)
+            gts = np.array(gt_frames[fid])
+            dets = np.array(det_frames[fid])
 
+            # 过滤掉置信度极低的检测框 (这步很重要，防止学习垃圾数据)
             valid_mask = dets[:, 6] > 0.1
             dets = dets[valid_mask]
-            if len(dets) == 0:
-                continue
+            if len(dets) == 0: continue
 
+            # 提取框 (x,y,w,h)
             gt_boxes = gts[:, 2:6]
             det_boxes = dets[:, 2:6]
+
+            # 计算 IoU 并匹配
             iou_matrix = iou_batch(det_boxes, gt_boxes)
             row_ind, col_ind = linear_sum_assignment(-iou_matrix)
 
             for r, c in zip(row_ind, col_ind):
-                if iou_matrix[r, c] < 0.5:
-                    continue
+                # IoU 阈值：只有匹配度高的才用来训练,IoU匹配阈值为0.5
+                if iou_matrix[r, c] < 0.5: continue
 
                 gt_id = int(gts[c, 1])
-                det_box = xywh_to_xyah(dets[r, 2:6])
-                gt_box = xywh_to_xyah(gts[c, 2:6])
 
-                det_val = det_box + [float(dets[r, 6])]
-                gt_val = gt_box
+                # Det: x, y, w, h, score (长度 5)
+                # 原本文件里的坐标是 [左上角x, 左上角y, 宽度w, 高度h]
+                #卡尔曼滤波         [中心点x, 中心点y, 宽高比例, 高度]
+                #预测框 det_val 蒸架一个数据 score（置信度得分）
+                d = dets[r]
+                det_val = [d[2] + d[4] / 2, d[3] + d[5] / 2, d[4] / d[5], d[5], d[6]]  # cx, cy, ratio, h, score
 
-                matched_tracks.setdefault(gt_id, {"det": [], "gt": [], "frame_ids": []})
-                matched_tracks[gt_id]["det"].append(det_val)
-                matched_tracks[gt_id]["gt"].append(gt_val)
-                matched_tracks[gt_id]["frame_ids"].append(fid)
+                # GT: x, y, w, h (长度 4)
+                g = gts[c]
+                gt_val = [g[2] + g[4] / 2, g[3] + g[5] / 2, g[4] / g[5], g[5]]  # cx, cy, ratio, h
 
+                if gt_id not in matched_tracks:
+                    matched_tracks[gt_id] = {'det': [], 'gt': []}
+
+                matched_tracks[gt_id]['det'].append(det_val)
+                matched_tracks[gt_id]['gt'].append(gt_val)
+
+        # 4. 切片生成序列，把长长的轨迹切成一段段“连续 20 帧”的小片段，SEQ_LEN = 20
+        count = 0
         for gt_id, track_dict in matched_tracks.items():
-            det_seq = np.asarray(track_dict["det"], dtype=np.float32)
-            gt_seq = np.asarray(track_dict["gt"], dtype=np.float32)
-            frame_ids = np.asarray(track_dict["frame_ids"], dtype=np.int64)
-            if len(det_seq) < SHORT_SEQ_LEN:
-                continue
+            det_list = track_dict['det']
+            gt_list = track_dict['gt']
 
-            long_tracks_input.append(torch.tensor(det_seq, dtype=torch.float32))
-            long_tracks_gt.append(torch.tensor(gt_seq, dtype=torch.float32))
-            long_tracks_frame_ids.append(torch.tensor(frame_ids, dtype=torch.long))
+            if len(det_list) < SEQ_LEN: continue
 
-            frame_gaps = np.diff(frame_ids)
-            num_gaps = int(np.sum(frame_gaps > 1))
-            long_track_meta.append(
-                {
-                    "seq": seq,
-                    "gt_id": gt_id,
-                    "length": int(len(det_seq)),
-                    "num_gaps": num_gaps,
-                    "max_gap": int(frame_gaps.max()) if len(frame_gaps) > 0 else 1,
-                }
-            )
-            short_sample_count += max(
-                0, (len(det_seq) - SHORT_SEQ_LEN + SHORT_SEQ_STEP - 1) // SHORT_SEQ_STEP
-            )
+            # === [核心修复] 分别转换 numpy，避免 Ragged Array 报错 ===
+            det_seq_full = np.array(det_list, dtype=np.float32)  # (Len, 5)
+            gt_seq_full = np.array(gt_list, dtype=np.float32)  # (Len, 4)
 
-    if not long_tracks_input:
-        print("Error: no valid long tracks generated. Check paths and detection results.")
-        return None
+            # 滑动窗口切片
+            for i in range(0, len(det_list) - SEQ_LEN, 2):  # step=2 增加数据量
+                all_tracks_input.append(det_seq_full[i: i + SEQ_LEN])
+                all_tracks_gt.append(gt_seq_full[i: i + SEQ_LEN])
+                count += 1
 
-    payload = {
-        "version": 3,
-        "dataset_type": "long_track",
-        "short_seq_len": SHORT_SEQ_LEN,
-        "short_seq_step": SHORT_SEQ_STEP,
-        "long_tracks_input": long_tracks_input,
-        "long_tracks_gt": long_tracks_gt,
-        "long_tracks_frame_ids": long_tracks_frame_ids,
-        "long_track_meta": long_track_meta,
-    }
-    return payload, short_sample_count
-
-
-def prepare_real_data(data_root, det_root, output_path="mot_train_data.pt"):
-    result = build_track_collections(data_root, det_root)
-    if result is None:
+    # 转换为 Tensor
+    if len(all_tracks_input) == 0:
+        print("Error: No samples generated! Check your paths.")
         return
 
-    payload, short_sample_count = result
-    torch.save(payload, output_path)
+    X = torch.tensor(np.array(all_tracks_input), dtype=torch.float32)
+    Y = torch.tensor(np.array(all_tracks_gt), dtype=torch.float32)
 
-    track_lengths = [meta["length"] for meta in payload["long_track_meta"]]
-    track_gaps = [meta["num_gaps"] for meta in payload["long_track_meta"]]
-    print(f"Saved long-track dataset to {output_path}")
-    print(f"Dataset version: {payload['version']} ({payload['dataset_type']})")
-    print(f"Total long tracks: {len(payload['long_tracks_input'])}")
-    print(f"Approx short windows ({payload['short_seq_len']} frames): {short_sample_count}")
-    print(
-        "Track length stats: "
-        f"min={min(track_lengths)}, max={max(track_lengths)}, mean={sum(track_lengths) / len(track_lengths):.1f}"
-    )
-    print(
-        "Temporal gap stats: "
-        f"tracks_with_gaps={sum(g > 0 for g in track_gaps)}, max_gaps_per_track={max(track_gaps)}"
-    )
+    print(f"INFO ✅| Total matched samples generated: {len(X)}")
+    print(f"INFO ✅| Input shape: {X.shape} (Batch, Seq, 5)")
+    print(f"INFO ✅| GT shape: {Y.shape} (Batch, Seq, 4)")
+
+    torch.save((X, Y), 'mot_train_data.pt')  # 覆盖旧文件，方便 train直接调用
+    print("Saved to mot_train_data.pt")
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Prepare long-track MOT17 training data.")
-    parser.add_argument("--data-root", default="datasets/mot", help="MOT dataset root.")
-    parser.add_argument(
-        "--det-root",
-        default="YOLOX_outputs/yolox_s_mot17_half/track_results",
-        help="Detection or tracking result directory used to align GT and detections.",
-    )
-    parser.add_argument("--output-path", default="mot_train_data.pt", help="Output .pt file path.")
-    return parser.parse_args()
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    prepare_real_data(args.data_root, args.det_root, args.output_path)
+if __name__ == '__main__':
+    # 确保路径指向 YOLOX 跑出来的 txt 结果文件夹
+    det_root = 'YOLOX_outputs/yolox_s_mot17_half/track_results'
+    prepare_real_data('datasets/mot', det_root)
