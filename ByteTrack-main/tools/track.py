@@ -1,3 +1,4 @@
+
 from loguru import logger
 
 import torch
@@ -14,7 +15,6 @@ import os
 import random
 import warnings
 import glob
-import re
 import motmetrics as mm
 from collections import OrderedDict
 from pathlib import Path
@@ -107,12 +107,6 @@ def make_parser():
     parser.add_argument("--track_buffer", type=int, default=30, help="the frames for keep lost tracks")
     parser.add_argument("--match_thresh", type=float, default=0.9, help="matching threshold for tracking")
     parser.add_argument("--min-box-area", type=float, default=100, help='filter out tiny boxes')
-    parser.add_argument(
-        "--kalmannet-ckpt",
-        default="pretrained/kalmannet_best.pth",
-        type=str,
-        help="KalmanNet checkpoint for tracker ablations.",
-    )
     parser.add_argument("--mot20", dest="mot20", default=False, action="store_true", help="test mot20.")
     return parser
 
@@ -121,7 +115,7 @@ def compare_dataframes(gts, ts):
     accs = []
     names = []
     for k, tsacc in ts.items():
-        if k in gts:
+        if k in gts:            
             logger.info('Comparing {}...'.format(k))
             accs.append(mm.utils.compare_to_groundtruth(gts[k], tsacc, 'iou', distth=0.5))
             names.append(k)
@@ -129,11 +123,6 @@ def compare_dataframes(gts, ts):
             logger.warning('No ground truth for {}, skipping.'.format(k))
 
     return accs, names
-
-
-def is_mot_result_file(path):
-    name = os.path.basename(path)
-    return re.match(r"^MOT\d{2}-\d{2}-(FRCNN|DPM|SDP)\.txt$", name) is not None
 
 
 @logger.catch
@@ -174,7 +163,7 @@ def main(exp, args, num_gpu):
 
     model = exp.get_model()
     logger.info("Model Summary: {}".format(get_model_info(model, exp.test_size)))
-    # logger.info("Model Structure:\n{}".format(str(model)))
+    #logger.info("Model Structure:\n{}".format(str(model)))
 
     val_loader = exp.get_eval_loader(args.batch_size, is_distributed, args.test)
     evaluator = MOTEvaluator(
@@ -184,7 +173,7 @@ def main(exp, args, num_gpu):
         confthre=exp.test_conf,
         nmsthre=exp.nmsthre,
         num_classes=exp.num_classes,
-    )
+        )
 
     torch.cuda.set_device(rank)
     model.cuda(rank)
@@ -211,7 +200,7 @@ def main(exp, args, num_gpu):
 
     if args.trt:
         assert (
-                not args.fuse and not is_distributed and args.batch_size == 1
+            not args.fuse and not is_distributed and args.batch_size == 1
         ), "TensorRT model is not support model fusing and distributed inferencing!"
         trt_file = os.path.join(file_name, "model_trt.pth")
         assert os.path.exists(
@@ -242,24 +231,19 @@ def main(exp, args, num_gpu):
     else:
         gtfiles = glob.glob(os.path.join('datasets/mot/train', '*/gt/gt{}.txt'.format(gt_type)))
     print('gt_files', gtfiles)
-    tsfiles = [
-        f for f in glob.glob(os.path.join(results_folder, '*.txt'))
-        if is_mot_result_file(f)
-    ]
+    tsfiles = [f for f in glob.glob(os.path.join(results_folder, '*.txt')) if not os.path.basename(f).startswith('eval')]
 
     logger.info('Found {} groundtruths and {} test files.'.format(len(gtfiles), len(tsfiles)))
     logger.info('Available LAP solvers {}'.format(mm.lap.available_solvers))
     logger.info('Default LAP solver \'{}\''.format(mm.lap.default_solver))
     logger.info('Loading files.')
-
+    
     gt = OrderedDict([(Path(f).parts[-3], mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=1)) for f in gtfiles])
-    ts = OrderedDict(
-        [(os.path.splitext(Path(f).parts[-1])[0], mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=-1)) for f in
-         tsfiles])
-
-    mh = mm.metrics.create()
+    ts = OrderedDict([(os.path.splitext(Path(f).parts[-1])[0], mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=-1)) for f in tsfiles])    
+    
+    mh = mm.metrics.create()    
     accs, names = compare_dataframes(gt, ts)
-
+    
     logger.info('Running metrics')
     metrics = ['recall', 'precision', 'num_unique_objects', 'mostly_tracked',
                'partially_tracked', 'mostly_lost', 'num_false_positives', 'num_misses',
@@ -267,7 +251,7 @@ def main(exp, args, num_gpu):
     summary = mh.compute_many(accs, names=names, metrics=metrics, generate_overall=True)
     # summary = mh.compute_many(accs, names=names, metrics=mm.metrics.motchallenge_metrics, generate_overall=True)
     # print(mm.io.render_summary(
-    #   summary, formatters=mh.formatters,
+    #   summary, formatters=mh.formatters, 
     #   namemap=mm.io.motchallenge_metric_names))
     div_dict = {
         'num_objects': ['num_false_positives', 'num_misses', 'num_switches', 'num_fragmentations'],
