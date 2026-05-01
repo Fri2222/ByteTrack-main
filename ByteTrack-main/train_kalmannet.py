@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument("--save-path", default="pretrained/kalmannet_best.pth")
     parser.add_argument("--data-file", default="mot_train_data.pt")
 
-    parser.add_argument("--residual-gain-limit", type=float, default=0.45)
+    parser.add_argument("--residual-gain-limit", type=float, default=0.8)
     parser.add_argument("--delta-k-reg-weight", type=float, default=0.01)
     parser.add_argument("--hard-gap-weight", type=float, default=2.5)
     parser.add_argument("--hard-lowconf-weight", type=float, default=2.0)
