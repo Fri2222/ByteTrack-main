@@ -3,7 +3,6 @@ import os
 import warnings
 
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
@@ -13,6 +12,7 @@ except ImportError:
     print("Error: Could not import KalmanNetNN.")
     raise SystemExit(1)
 
+
 CONF_BUCKETS = (
     ("low", 0.0, 0.4),
     ("mid", 0.4, 0.7),
@@ -21,24 +21,21 @@ CONF_BUCKETS = (
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train KalmanNet (Single Stage Ablation for Sequence Length).")
+    parser = argparse.ArgumentParser(description="Train KalmanNet with configurable feature modes.")
     parser.add_argument(
         "--feature-mode",
         default="f2_f4_conf",
         choices=sorted(FEATURE_SPECS.keys()),
         help="Controlled feature ablation mode.",
     )
-    # 👇 [核心修改 1]：移除短长轨配置，直接暴露 seq_len, seq_step 和基础训练参数
-    parser.add_argument("--epochs", type=int, default=60, help="总训练轮数")
-    parser.add_argument("--lr", type=float, default=1e-3, help="初始学习率")
-    parser.add_argument("--seq-len", type=int, default=20, help="BPTT截断序列长度 (如 15, 20, 25...)")
-    parser.add_argument("--seq-step", type=int, default=5, help="滑动窗口采样步长")
-
+    parser.add_argument("--short-epochs", type=int, default=40)
+    parser.add_argument("--long-epochs", type=int, default=20)
+    parser.add_argument("--short-lr", type=float, default=1e-3)
+    parser.add_argument("--long-lr", type=float, default=2e-4)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--val-split", type=float, default=0.1)
     parser.add_argument("--save-path", default="pretrained/kalmannet_best.pth")
     parser.add_argument("--data-file", default="mot_train_data.pt")
-
     parser.add_argument("--residual-gain-limit", type=float, default=0.45)
     parser.add_argument("--delta-k-reg-weight", type=float, default=0.01)
     parser.add_argument("--hard-gap-weight", type=float, default=2.5)
@@ -49,19 +46,91 @@ def parse_args():
     return parser.parse_args()
 
 
-# ================= 数据集与策略部分 =================
+def build_init_cov(measurement):
+    h = measurement[:, 3].clamp_min(1e-3)
+    std = torch.stack(
+        [
+            2.0 * (1.0 / 20.0) * h,
+            2.0 * (1.0 / 20.0) * h,
+            torch.full_like(h, 1e-2),
+            2.0 * (1.0 / 20.0) * h,
+            10.0 * (1.0 / 160.0) * h,
+            10.0 * (1.0 / 160.0) * h,
+            torch.full_like(h, 1e-5),
+            10.0 * (1.0 / 160.0) * h,
+        ],
+        dim=1,
+    )
+    return torch.diag_embed(std.pow(2))
+
+
+def build_motion_cov(state):
+    h = state[:, 3].clamp_min(1e-3)
+    std = torch.stack(
+        [
+            (1.0 / 20.0) * h,
+            (1.0 / 20.0) * h,
+            torch.full_like(h, 1e-2),
+            (1.0 / 20.0) * h,
+            (1.0 / 160.0) * h,
+            (1.0 / 160.0) * h,
+            torch.full_like(h, 1e-5),
+            (1.0 / 160.0) * h,
+        ],
+        dim=1,
+    )
+    return torch.diag_embed(std.pow(2))
+
+
+def build_meas_cov(pred_state, conf):
+    h = pred_state[:, 3].clamp_min(1e-3)
+    std = torch.stack(
+        [
+            (1.0 / 20.0) * h,
+            (1.0 / 20.0) * h,
+            torch.full_like(h, 1e-1),
+            (1.0 / 20.0) * h,
+        ],
+        dim=1,
+    )
+    cov = torch.diag_embed(std.pow(2))
+    conf = conf.clamp(0.1, 0.99).view(-1, 1, 1)
+    return cov * (1.0 / conf)
+
+
+def classical_gain(cov_pred, h_mat, s_mat):
+    cross_cov = torch.matmul(cov_pred, h_mat.t())
+    s_inv = torch.linalg.inv(s_mat)
+    return torch.matmul(cross_cov, s_inv)
+
+
+def stable_observation_diff(curr_meas, prev_meas):
+    raw_diff = curr_meas - prev_meas
+    scale = torch.tensor([0.05, 0.05, 0.02, 0.05], device=curr_meas.device).view(1, -1)
+    return torch.tanh(raw_diff / scale)
+
+
+def build_feature_input(feature_mode, f1, innovation, prev_update, conf):
+    if feature_mode == "f2_conf":
+        return torch.cat([innovation, conf], dim=1)
+    if feature_mode == "f2_f4_conf":
+        return torch.cat([innovation, prev_update, conf], dim=1)
+    if feature_mode == "f1_f2_f4_conf":
+        return torch.cat([f1, innovation, prev_update, conf], dim=1)
+    raise ValueError(f"Unsupported feature_mode: {feature_mode}")
+
 
 class FixedWindowTrackDataset(Dataset):
     def __init__(
-            self,
-            tracks_obs,
-            tracks_gt,
-            tracks_frame_ids,
-            seq_len=20,
-            step=5,
-            lowconf_thresh=0.3,
-            lowconf_resample_boost=2.0,
-            gap_resample_boost=2.5,
+        self,
+        tracks_obs,
+        tracks_gt,
+        tracks_frame_ids,
+        seq_len=20,
+        step=2,
+        lowconf_thresh=0.3,
+        lowconf_resample_boost=2.0,
+        gap_resample_boost=2.5,
     ):
         self.samples = []
         self.sample_weights = []
@@ -202,72 +271,22 @@ def compute_step_weights(frame_gap, conf, lowconf_thresh, hard_gap_weight, hard_
     return weights
 
 
-def build_init_cov(measurement):
-    h = measurement[:, 3].clamp_min(1e-3)
-    std = torch.stack([
-        2.0 * (1.0 / 20.0) * h, 2.0 * (1.0 / 20.0) * h, torch.full_like(h, 1e-2), 2.0 * (1.0 / 20.0) * h,
-        10.0 * (1.0 / 160.0) * h, 10.0 * (1.0 / 160.0) * h, torch.full_like(h, 1e-5), 10.0 * (1.0 / 160.0) * h,
-    ], dim=1)
-    return torch.diag_embed(std.pow(2))
-
-
-def build_motion_cov(state):
-    h = state[:, 3].clamp_min(1e-3)
-    std = torch.stack([
-        (1.0 / 20.0) * h, (1.0 / 20.0) * h, torch.full_like(h, 1e-2), (1.0 / 20.0) * h,
-        (1.0 / 160.0) * h, (1.0 / 160.0) * h, torch.full_like(h, 1e-5), (1.0 / 160.0) * h,
-    ], dim=1)
-    return torch.diag_embed(std.pow(2))
-
-
-def build_meas_cov(pred_state, conf):
-    h = pred_state[:, 3].clamp_min(1e-3)
-    std = torch.stack([
-        (1.0 / 20.0) * h, (1.0 / 20.0) * h, torch.full_like(h, 1e-1), (1.0 / 20.0) * h,
-    ], dim=1)
-    cov = torch.diag_embed(std.pow(2))
-    conf = conf.clamp(0.1, 0.99).view(-1, 1, 1)
-    return cov * (1.0 / conf)
-
-
-def classical_gain(cov_pred, h_mat, s_mat):
-    cross_cov = torch.matmul(cov_pred, h_mat.t())
-    s_inv = torch.linalg.inv(s_mat)
-    return torch.matmul(cross_cov, s_inv)
-
-
-def stable_observation_diff(curr_meas, prev_meas):
-    raw_diff = curr_meas - prev_meas
-    scale = torch.tensor([0.05, 0.05, 0.02, 0.05], device=curr_meas.device).view(1, -1)
-    return torch.tanh(raw_diff / scale)
-
-
-def build_feature_input(feature_mode, f1, innovation, prev_update, conf):
-    if feature_mode == "f2_conf":
-        return torch.cat([innovation, conf], dim=1)
-    if feature_mode == "f2_f4_conf":
-        return torch.cat([innovation, prev_update, conf], dim=1)
-    if feature_mode == "f1_f2_f4_conf":
-        return torch.cat([f1, innovation, prev_update, conf], dim=1)
-    raise ValueError(f"Unsupported feature_mode: {feature_mode}")
-
-
 def run_sequence_batch(
-        model,
-        batch_obs,
-        batch_gt,
-        batch_frame_ids,
-        feature_mode,
-        device,
-        f_mat,
-        h_mat,
-        residual_gain_limit,
-        delta_k_reg_weight,
-        lowconf_thresh,
-        hard_gap_weight,
-        hard_lowconf_weight,
-        epoch_stats,
-        add_noise=False,
+    model,
+    batch_obs,
+    batch_gt,
+    batch_frame_ids,
+    feature_mode,
+    device,
+    f_mat,
+    h_mat,
+    residual_gain_limit,
+    delta_k_reg_weight,
+    lowconf_thresh,
+    hard_gap_weight,
+    hard_lowconf_weight,
+    epoch_stats,
+    add_noise=False,
 ):
     b_obs = batch_obs.to(device)
     b_gt = batch_gt.to(device)
@@ -366,6 +385,11 @@ def load_long_track_payload(data_file_path):
         raise RuntimeError(
             "mot_train_data.pt is not a long-track dataset. Please rerun prepare_mot_data.py."
         )
+    if payload.get("version", 0) < 3:
+        raise RuntimeError(
+            "mot_train_data.pt is an old long-track dataset without frame_ids. "
+            "Please rerun prepare_mot_data.py to regenerate version 3."
+        )
     return payload
 
 
@@ -382,13 +406,7 @@ def save_checkpoint(save_path, model, feature_mode, extra_meta=None):
 def train():
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"==================================================")
-    print(f"🚀 Training KalmanNet with Sequence Length Control")
-    print(f"-> Device:     {device}")
-    print(f"-> Seq Len:    {args.seq_len} 帧")
-    print(f"-> Seq Step:   {args.seq_step} 步长")
-    print(f"-> Epochs:     {args.epochs} 轮")
-    print(f"==================================================")
+    print(f"Training on device: {device}")
 
     residual_gain_limit = args.residual_gain_limit
 
@@ -397,44 +415,71 @@ def train():
         return
 
     payload = load_long_track_payload(args.data_file)
-
-    # 动态构建权重保存名称，防止不同长度互相覆盖
-    base_name, ext = os.path.splitext(args.save_path)
-    actual_save_path = f"{base_name}_len{args.seq_len}_step{args.seq_step}{ext}"
+    print(
+        "INFO Found long-track dataset: "
+        f"version={payload['version']} short_seq_len={payload['short_seq_len']} "
+        f"short_seq_step={payload['short_seq_step']} feature_mode={args.feature_mode}"
+    )
 
     scale = torch.tensor([1920, 1080, 1, 1080], dtype=torch.float32)
     tracks_obs = payload["long_tracks_input"]
     tracks_gt = payload["long_tracks_gt"]
     tracks_frame_ids = payload["long_tracks_frame_ids"]
+    short_seq_len = payload["short_seq_len"]
+    short_seq_step = payload["short_seq_step"]
 
     tracks_obs, tracks_gt = normalize_tracks(tracks_obs, tracks_gt, scale)
     (
-        train_tracks_obs, train_tracks_gt, train_tracks_frame_ids,
-        val_tracks_obs, val_tracks_gt, val_tracks_frame_ids,
+        train_tracks_obs,
+        train_tracks_gt,
+        train_tracks_frame_ids,
+        val_tracks_obs,
+        val_tracks_gt,
+        val_tracks_frame_ids,
     ) = split_tracks(tracks_obs, tracks_gt, tracks_frame_ids, val_split=args.val_split, seed=42)
 
-    # 👇 [核心修改 2]：直接使用传入的 seq_len 和 seq_step 划分数据集
-    train_dataset = FixedWindowTrackDataset(
-        train_tracks_obs, train_tracks_gt, train_tracks_frame_ids,
-        seq_len=args.seq_len, step=args.seq_step,
+    short_train_dataset = FixedWindowTrackDataset(
+        train_tracks_obs,
+        train_tracks_gt,
+        train_tracks_frame_ids,
+        seq_len=short_seq_len,
+        step=short_seq_step,
         lowconf_thresh=args.lowconf_thresh,
         lowconf_resample_boost=args.lowconf_resample_boost,
         gap_resample_boost=args.gap_resample_boost,
     )
-    val_dataset = FixedWindowTrackDataset(
-        val_tracks_obs, val_tracks_gt, val_tracks_frame_ids,
-        seq_len=args.seq_len, step=args.seq_step,
+    short_val_dataset = FixedWindowTrackDataset(
+        val_tracks_obs,
+        val_tracks_gt,
+        val_tracks_frame_ids,
+        seq_len=short_seq_len,
+        step=short_seq_step,
         lowconf_thresh=args.lowconf_thresh,
         lowconf_resample_boost=args.lowconf_resample_boost,
         gap_resample_boost=args.gap_resample_boost,
     )
+    print(
+        "Long-track split (by whole tracks): "
+        f"train_tracks={len(train_tracks_obs)} val_tracks={len(val_tracks_obs)} | "
+        f"train_windows={len(short_train_dataset)} val_windows={len(short_val_dataset)}"
+    )
 
-    print(f"数据集划分完成! 生成窗口数 (Train: {len(train_dataset)}, Val: {len(val_dataset)})")
+    sample_weights = torch.DoubleTensor(short_train_dataset.sample_weights)
+    train_sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True,
+    )
+    print(
+        "Train window resampling: "
+        f"weight_mean={sample_weights.mean().item():.3f} "
+        f"weight_max={sample_weights.max().item():.3f}"
+    )
 
-    sample_weights = torch.DoubleTensor(train_dataset.sample_weights)
-    train_sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    train_loader = DataLoader(
+        short_train_dataset, batch_size=args.batch_size, sampler=train_sampler
+    )
+    val_loader = DataLoader(short_val_dataset, batch_size=args.batch_size, shuffle=False)
 
     model = KalmanNetNN(feature_mode=args.feature_mode).to(device)
 
@@ -443,68 +488,103 @@ def train():
         f_mat[i, 4 + i] = 1.0
     h_mat = torch.eye(4, 8, device=device)
 
-    os.makedirs(os.path.dirname(actual_save_path) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(args.save_path) or ".", exist_ok=True)
     best_val_loss = float("inf")
 
-    # 👇 [核心修改 3]：单阶段干净利落的循环，去除了 stages 嵌套
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-5)
+    stages = [
+        ("Stage-1 Short BPTT", train_loader, val_loader, args.short_epochs, args.short_lr, True),
+        ("Stage-2 Long-window Fine-tune", train_loader, val_loader, args.long_epochs, args.long_lr, False),
+    ]
 
-    for epoch in range(args.epochs):
-        model.train()
-        total_train_loss = 0.0
-        train_stats = init_epoch_stats()
+    for stage_name, train_loader, val_loader, epochs, lr, add_noise in stages:
+        optimizer = optim.Adam(model.parameters(), lr=lr)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=epochs, eta_min=1e-5
+        )
+        print(f"Start {stage_name} ...")
 
-        for b_obs, b_gt, b_frame_ids in train_loader:
-            optimizer.zero_grad()
-            batch_loss = run_sequence_batch(
-                model, b_obs, b_gt, b_frame_ids, args.feature_mode, device,
-                f_mat, h_mat, residual_gain_limit, args.delta_k_reg_weight,
-                args.lowconf_thresh, args.hard_gap_weight, args.hard_lowconf_weight,
-                train_stats, add_noise=True,
-            )
-            batch_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-            total_train_loss += batch_loss.item()
+        for epoch in range(epochs):
+            model.train()
+            total_train_loss = 0.0
+            train_stats = init_epoch_stats()
 
-        scheduler.step()
-        avg_train_loss = total_train_loss / max(1, len(train_loader))
-
-        # 验证过程
-        model.eval()
-        total_val_loss = 0.0
-        val_stats = init_epoch_stats()
-        with torch.no_grad():
-            for b_obs, b_gt, b_frame_ids in val_loader:
+            for b_obs, b_gt, b_frame_ids in train_loader:
+                optimizer.zero_grad()
                 batch_loss = run_sequence_batch(
-                    model, b_obs, b_gt, b_frame_ids, args.feature_mode, device,
-                    f_mat, h_mat, residual_gain_limit, args.delta_k_reg_weight,
-                    args.lowconf_thresh, args.hard_gap_weight, args.hard_lowconf_weight,
-                    val_stats, add_noise=False,
+                    model,
+                    b_obs,
+                    b_gt,
+                    b_frame_ids,
+                    args.feature_mode,
+                    device,
+                    f_mat,
+                    h_mat,
+                    residual_gain_limit,
+                    args.delta_k_reg_weight,
+                    args.lowconf_thresh,
+                    args.hard_gap_weight,
+                    args.hard_lowconf_weight,
+                    train_stats,
+                    add_noise=add_noise,
                 )
-                total_val_loss += batch_loss.item()
+                batch_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer.step()
+                total_train_loss += batch_loss.item()
 
-        avg_val_loss = total_val_loss / max(1, len(val_loader))
-        is_best = avg_val_loss < best_val_loss
-        if is_best:
-            best_val_loss = avg_val_loss
-            save_checkpoint(
-                actual_save_path, model, args.feature_mode,
-                extra_meta={"best_val_loss": best_val_loss},
-            )
+            scheduler.step()
+            avg_train_loss = total_train_loss / max(1, len(train_loader))
 
-        current_lr = scheduler.get_last_lr()[0]
-        best_flag = " <- best" if is_best else ""
-        if (epoch + 1) % 2 == 0 or epoch == 0 or epoch == args.epochs - 1:
-            print(
-                f"Epoch [{epoch + 1}/{args.epochs}]  "
-                f"Train: {avg_train_loss:.6f}  Val: {avg_val_loss:.6f}  "
-                f"LR: {current_lr:.6f}{best_flag}"
-            )
+            model.eval()
+            total_val_loss = 0.0
+            val_stats = init_epoch_stats()
+            with torch.no_grad():
+                for b_obs, b_gt, b_frame_ids in val_loader:
+                    batch_loss = run_sequence_batch(
+                        model,
+                        b_obs,
+                        b_gt,
+                        b_frame_ids,
+                        args.feature_mode,
+                        device,
+                        f_mat,
+                        h_mat,
+                        residual_gain_limit,
+                        args.delta_k_reg_weight,
+                        args.lowconf_thresh,
+                        args.hard_gap_weight,
+                        args.hard_lowconf_weight,
+                        val_stats,
+                        add_noise=False,
+                    )
+                    total_val_loss += batch_loss.item()
 
-    print(f"✅ 训练完成. 截断长度={args.seq_len}, Best Val Loss={best_val_loss:.6f}")
-    print(f"📦 权重已保存至: {actual_save_path}")
+            avg_val_loss = total_val_loss / max(1, len(val_loader))
+            is_best = avg_val_loss < best_val_loss
+            if is_best:
+                best_val_loss = avg_val_loss
+                save_checkpoint(
+                    args.save_path,
+                    model,
+                    args.feature_mode,
+                    extra_meta={"best_val_loss": best_val_loss},
+                )
+
+            current_lr = scheduler.get_last_lr()[0]
+            best_flag = " <- best" if is_best else ""
+            if (epoch + 1) % 2 == 0 or epoch == 0 or epoch == epochs - 1:
+                print(
+                    f"{stage_name} Epoch [{epoch + 1}/{epochs}]  "
+                    f"Train: {avg_train_loss:.6f}  Val: {avg_val_loss:.6f}  "
+                    f"LR: {current_lr:.6f}{best_flag}"
+                )
+                print(format_epoch_stats("  Train Monitor:", train_stats))
+                print(format_epoch_stats("  Val Monitor:  ", val_stats))
+
+    print(
+        f"Training complete. feature_mode={args.feature_mode} "
+        f"best_val_loss={best_val_loss:.6f}, saved to {args.save_path}"
+    )
 
 
 if __name__ == "__main__":
