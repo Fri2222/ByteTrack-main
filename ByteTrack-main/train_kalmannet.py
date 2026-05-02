@@ -31,7 +31,7 @@ def parse_args():
     # 👇 [核心修改 1]：移除短长轨配置，直接暴露 seq_len, seq_step 和基础训练参数
     parser.add_argument("--epochs", type=int, default=60, help="总训练轮数")
     parser.add_argument("--lr", type=float, default=1e-3, help="初始学习率")
-    parser.add_argument("--seq-len", type=int, default=20, help="BPTT截断序列长度 (如 15, 20, 25...)")
+    parser.add_argument("--seq-len", type=int, default=35, help="BPTT截断序列长度 (如 15, 20, 25...)")
     parser.add_argument("--seq-step", type=int, default=5, help="滑动窗口采样步长")
 
     parser.add_argument("--batch-size", type=int, default=32)
